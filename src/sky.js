@@ -1,0 +1,110 @@
+import * as THREE from 'three';
+
+const vertexShader = /* glsl */ `
+varying vec3 vDir;
+void main() {
+  vDir = position;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`;
+
+const fragmentShader = /* glsl */ `
+varying vec3 vDir;
+uniform vec3 uTop;
+uniform vec3 uHorizon;
+uniform vec3 uSunDir;
+uniform vec3 uSunColor;
+uniform vec3 uMoonDir;
+uniform vec3 uCloud;
+uniform float uStars;
+uniform float uTime;
+
+float hash3(vec3 p) {
+  p = fract(p * 0.3183099 + 0.1);
+  p *= 17.0;
+  return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+}
+float hash2(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float noise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  float a = hash2(i), b = hash2(i + vec2(1.0, 0.0));
+  float c = hash2(i + vec2(0.0, 1.0)), d = hash2(i + vec2(1.0, 1.0));
+  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+float fbm(vec2 p) {
+  float v = 0.0, a = 0.5;
+  for (int i = 0; i < 5; i++) { v += a * noise(p); p *= 2.03; a *= 0.5; }
+  return v;
+}
+
+void main() {
+  vec3 d = normalize(vDir);
+  float h = d.y;
+  vec3 col = mix(uHorizon, uTop, pow(smoothstep(0.0, 0.45, h), 0.7));
+  // Ниже горизонта — мягкая дымка, без земли.
+  col = mix(col, uHorizon * 0.9, smoothstep(0.0, -0.3, h));
+
+  float sd = max(dot(d, uSunDir), 0.0);
+  float sunVis = smoothstep(-0.08, 0.02, uSunDir.y);
+  col += uSunColor * (pow(sd, 1400.0) * 40.0 + pow(sd, 10.0) * 0.4) * sunVis;
+
+  float md = max(dot(d, uMoonDir), 0.0);
+  float moonVis = smoothstep(-0.05, 0.05, uMoonDir.y) * uStars;
+  col += vec3(0.88, 0.92, 1.0) * (smoothstep(0.99955, 0.9997, md) * 4.0 + pow(md, 80.0) * 0.12) * moonVis;
+
+  vec3 sp = d * 220.0;
+  vec3 cell = floor(sp);
+  float s = hash3(cell);
+  float star = smoothstep(0.9965, 1.0, s);
+  float tw = 0.6 + 0.4 * sin(uTime * 3.0 + s * 100.0);
+  float core = smoothstep(0.35, 0.0, length(fract(sp) - 0.5));
+  col += vec3(star * core * tw * 3.0) * uStars * smoothstep(0.0, 0.15, h);
+
+  if (h > 0.0) {
+    vec2 cp = d.xz / (h + 0.15) * 1.2 + vec2(uTime * 0.012, uTime * 0.004);
+    float c = smoothstep(0.5, 0.85, fbm(cp));
+    col = mix(col, uCloud, c * 0.8 * smoothstep(0.0, 0.2, h));
+  }
+
+  gl_FragColor = vec4(col, 1.0);
+}
+`;
+
+export function createSky() {
+  const uniforms = {
+    uTop: { value: new THREE.Color() },
+    uHorizon: { value: new THREE.Color() },
+    uSunDir: { value: new THREE.Vector3(0, 1, 0) },
+    uSunColor: { value: new THREE.Color() },
+    uMoonDir: { value: new THREE.Vector3(0, -1, 0) },
+    uCloud: { value: new THREE.Color() },
+    uStars: { value: 0 },
+    uTime: { value: 0 },
+  };
+  const material = new THREE.ShaderMaterial({
+    uniforms,
+    vertexShader,
+    fragmentShader,
+    side: THREE.BackSide,
+    depthWrite: false,
+  });
+  const mesh = new THREE.Mesh(new THREE.SphereGeometry(80, 48, 24), material);
+  mesh.renderOrder = -1;
+
+  const white = new THREE.Color(1, 1, 1);
+  const night = new THREE.Color('#1b2344');
+
+  function update(s, time) {
+    uniforms.uTop.value.copy(s.top);
+    uniforms.uHorizon.value.copy(s.hor);
+    uniforms.uSunDir.value.copy(s.sunDir);
+    uniforms.uSunColor.value.copy(s.light);
+    uniforms.uMoonDir.value.copy(s.moonDir);
+    uniforms.uStars.value = s.stars;
+    uniforms.uTime.value = time;
+    uniforms.uCloud.value.copy(s.hor).lerp(white, 0.55).multiplyScalar(0.35 + s.ai * 0.75).lerp(night, s.stars * 0.85);
+  }
+
+  return { mesh, update };
+}
