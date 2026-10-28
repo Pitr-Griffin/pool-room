@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
-import { ROOM, POOL, EYE_HEIGHT, inPool, inMeadow } from './layout.js';
+import { ROOM, EYE_HEIGHT, inPool, inMeadow, groundAt } from './layout.js';
 
 export class Player {
   constructor(camera, dom) {
@@ -54,8 +54,8 @@ export class Player {
     this.pos.z = Math.min(Math.max(this.pos.z, ROOM.z0 + m), ROOM.z1 - m);
 
     const nowPool = inPool(this.pos.x, this.pos.z);
-    const target = nowPool ? POOL.bottom : 0;
-    this.ground += (target - this.ground) * (1 - Math.exp(-(target < this.ground ? 7 : 5) * dt));
+    const target = groundAt(this.pos.x, this.pos.z);
+    this.ground += (target - this.ground) * (1 - Math.exp(-(target < this.ground ? 9 : 7) * dt));
     if (nowPool && !this.wasInPool) events.push('enter');
     if (!nowPool && this.wasInPool) events.push('exit');
     this.wasInPool = nowPool;

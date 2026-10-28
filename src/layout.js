@@ -7,8 +7,22 @@ export const WINDOW = { x0: -3.2, x1: 0, y0: 0.7, y1: 2.8 };
 export const MEADOW = { x0: -3.45, x1: 0.25, z0: -3, z1: -1.9 };
 export const EYE_HEIGHT = 1.65;
 
+// Ступени из кафеля вдоль западного края бассейна: спускаются от пола к дну.
+export const STEPS = { count: 4, tread: 0.32 };
+export const STEP_RISE = -POOL.bottom / (STEPS.count + 1);
+
 export function inPool(x, z, margin = 0) {
   return x > POOL.x0 + margin && x < POOL.x1 - margin && z > POOL.z0 + margin && z < POOL.z1 - margin;
+}
+
+// Высота дна бассейна с учётом ступеней.
+export function poolFloorAt(x) {
+  const i = Math.floor((x - POOL.x0) / STEPS.tread);
+  return i < STEPS.count ? -(Math.max(i, 0) + 1) * STEP_RISE : POOL.bottom;
+}
+
+export function groundAt(x, z) {
+  return inPool(x, z) ? poolFloorAt(x) : 0;
 }
 
 // Неровный передний край луговой полосы.
@@ -49,6 +63,19 @@ float inBeam(vec3 p, vec3 ld) {
   float e = 0.05;
   return smoothstep(WIN_X0, WIN_X0 + e, h.x) * (1.0 - smoothstep(WIN_X1 - e, WIN_X1, h.x))
        * smoothstep(WIN_Y0, WIN_Y0 + e, h.y) * (1.0 - smoothstep(WIN_Y1 - e, WIN_Y1, h.y));
+}
+
+// То же, но с тенью от переплёта окна (две вертикальные и одна горизонтальная перекладина).
+float inBeamFramed(vec3 p, vec3 ld) {
+  float b = inBeam(p, ld);
+  if (b <= 0.0) return 0.0;
+  float t = (ROOM_Z0 - p.z) / ld.z;
+  vec2 h = p.xy + ld.xy * t;
+  float w = WIN_X1 - WIN_X0;
+  float m1 = smoothstep(0.012, 0.03, abs(h.x - (WIN_X0 + w / 3.0)));
+  float m2 = smoothstep(0.012, 0.03, abs(h.x - (WIN_X0 + w * 2.0 / 3.0)));
+  float m3 = smoothstep(0.012, 0.03, abs(h.y - (WIN_Y0 + (WIN_Y1 - WIN_Y0) * 0.62)));
+  return b * m1 * m2 * m3;
 }
 
 // Бегущий узор отблесков воды.

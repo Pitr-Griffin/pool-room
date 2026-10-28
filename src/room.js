@@ -1,54 +1,31 @@
 import * as THREE from 'three';
-import { ROOM, POOL, WINDOW, LAYOUT_GLSL } from './layout.js';
+import { ROOM, POOL, WINDOW, STEPS, STEP_RISE, LAYOUT_GLSL } from './layout.js';
 
-const TILE_REPEAT = 0.6; // текстура — 4×4 плитки по 15 см
-
-function makeTileTexture() {
-  const size = 512;
-  const n = 4;
-  const c = document.createElement('canvas');
-  c.width = c.height = size;
-  const g = c.getContext('2d');
-  g.fillStyle = '#c3cacc';
-  g.fillRect(0, 0, size, size);
-  const s = size / n;
-  const gap = 6;
-  for (let i = 0; i < n; i++) {
-    for (let j = 0; j < n; j++) {
-      const v = 238 + Math.random() * 12;
-      const x = i * s + gap / 2;
-      const y = j * s + gap / 2;
-      const grad = g.createLinearGradient(x, y, x + s, y + s);
-      grad.addColorStop(0, `rgb(${Math.min(255, v + 4)},${Math.min(255, v + 6)},${Math.min(255, v + 7)})`);
-      grad.addColorStop(1, `rgb(${v - 8},${v - 5},${v - 3})`);
-      g.fillStyle = grad;
-      g.fillRect(x, y, s - gap, s - gap);
-    }
-  }
-  const tex = new THREE.CanvasTexture(c);
-  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 8;
-  return tex;
-}
-
-// Кафель с UV в мировых координатах (плитка непрерывна на стыках)
-// и отблесками воды на потолке, стенах и дне бассейна.
-export function makeTileMaterial(tex, color, shared) {
-  const m = new THREE.MeshStandardMaterial({ map: tex, color, roughness: 0.3, metalness: 0 });
+// Кафель целиком процедурный: плитка 15 см со скруглёнными краями, утопленные швы,
+// глянцевая глазурь, лёгкая неравномерность цвета и грязь в швах.
+// Плюс бегущие отблески воды на потолке, стенах и дне бассейна.
+// cove = true: изогнутая галтель, плитка раскладывается по её развёртке (uv в метрах).
+export function makeTileMaterial(color, shared, cove = false) {
+  const m = new THREE.MeshStandardMaterial({
+    color,
+    roughness: 0.15,
+    metalness: 0,
+    side: cove ? THREE.DoubleSide : THREE.FrontSide,
+  });
+  if (cove) m.defines = { TILE_COVE: '' };
   m.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, shared);
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vTileWP;\nvarying vec3 vTileN;')
+      .replace(
+        '#include <common>',
+        '#include <common>\nvarying vec3 vTileWP;\nvarying vec3 vTileN;\nvarying vec2 vCoveUv;'
+      )
       .replace(
         '#include <uv_vertex>',
         `#include <uv_vertex>
-        vec4 tWP = modelMatrix * vec4(position, 1.0);
-        vec3 tN = normalize(mat3(modelMatrix) * normal);
-        vTileWP = tWP.xyz;
-        vTileN = tN;
-        vec2 tc = abs(tN.y) > 0.5 ? tWP.xz : (abs(tN.x) > 0.5 ? tWP.zy : tWP.xy);
-        vMapUv = tc / ${TILE_REPEAT.toFixed(3)};`
+        vTileWP = (modelMatrix * vec4(position, 1.0)).xyz;
+        vTileN = normalize(mat3(modelMatrix) * normal);
+        vCoveUv = uv;`
       );
     shader.fragmentShader = shader.fragmentShader
       .replace(
@@ -56,37 +33,81 @@ export function makeTileMaterial(tex, color, shared) {
         `#include <common>
         varying vec3 vTileWP;
         varying vec3 vTileN;
+        varying vec2 vCoveUv;
         uniform float uCTime;
         uniform vec3 uLightDir;
         uniform vec3 uLightCol;
         uniform vec3 uSkyCol;
         uniform float uWaterLit;
-        ${LAYOUT_GLSL}`
+        ${LAYOUT_GLSL}
+        float tHash(vec2 p) { return fract(sin(dot(p, vec2(41.3, 289.1))) * 43758.5453); }
+        float tNoise(vec2 p) {
+          vec2 i = floor(p), f = fract(p);
+          f = f * f * (3.0 - 2.0 * f);
+          return mix(mix(tHash(i), tHash(i + vec2(1.0, 0.0)), f.x),
+                     mix(tHash(i + vec2(0.0, 1.0)), tHash(i + vec2(1.0, 1.0)), f.x), f.y);
+        }`
+      )
+      .replace(
+        '#include <map_fragment>',
+        `#include <map_fragment>
+        vec3 tWP = vTileWP;
+        vec3 tAn = abs(normalize(vTileN));
+        vec2 tc;
+        vec3 tU;
+        vec3 tV;
+        if (tAn.y >= tAn.x && tAn.y >= tAn.z) { tc = tWP.xz; tU = vec3(1.0, 0.0, 0.0); tV = vec3(0.0, 0.0, 1.0); }
+        else if (tAn.x >= tAn.z) { tc = tWP.zy; tU = vec3(0.0, 0.0, 1.0); tV = vec3(0.0, 1.0, 0.0); }
+        else { tc = tWP.xy; tU = vec3(1.0, 0.0, 0.0); tV = vec3(0.0, 1.0, 0.0); }
+        #ifdef TILE_COVE
+          tc = vCoveUv;
+          tU = vec3(0.0);
+          tV = vec3(0.0);
+        #endif
+        vec2 tg = tc / 0.15;
+        vec2 tf = fract(tg) - 0.5;
+        vec2 td = 0.5 - abs(tf);
+        float tAA = max(fwidth(tg.x) + fwidth(tg.y), 0.002);
+        float tGrout = 1.0 - smoothstep(0.022, 0.022 + tAA, min(td.x, td.y));
+        vec2 tSlope = sign(tf) * (1.0 - smoothstep(0.022, 0.09, td)) * (1.0 - tGrout);
+        float tVar = tHash(floor(tg));
+        vec3 tileCol = vec3(0.955, 0.972, 0.978) * (0.97 + 0.045 * tVar);
+        bool tVertical = tAn.y < 0.5;
+        if (tVertical && tWP.y > 1.05 && tWP.y < 1.2) tileCol = vec3(0.66, 0.84, 0.86) * (0.97 + 0.05 * tVar);
+        if (tVertical && tWP.y < -0.005 && tWP.y > -0.155) tileCol = vec3(0.2, 0.42, 0.56) * (0.95 + 0.08 * tVar);
+        float tGrime = tNoise(tc * 1.3) * 0.6 + tNoise(tc * 7.0) * 0.4;
+        vec3 groutCol = vec3(0.74, 0.76, 0.75) * (0.88 + 0.2 * tGrime);
+        diffuseColor.rgb *= mix(tileCol * (1.0 - tGrime * 0.03), groutCol, tGrout);`
+      )
+      .replace(
+        '#include <roughnessmap_fragment>',
+        `#include <roughnessmap_fragment>
+        roughnessFactor = mix(0.08 + tGrime * 0.08, 0.85, tGrout);`
+      )
+      .replace(
+        '#include <normal_fragment_maps>',
+        `#include <normal_fragment_maps>
+        normal = normalize(normal + mat3(viewMatrix) * (tU * tSlope.x + tV * tSlope.y) * 0.45);`
       )
       .replace(
         '#include <opaque_fragment>',
         `{
-          vec3 wp = vTileWP;
-          vec3 tn = normalize(vTileN);
-          vec2 cc = abs(tn.y) > 0.5 ? wp.xz : (abs(tn.x) > 0.5 ? wp.zy : wp.xy);
           vec3 add = vec3(0.0);
-          if (wp.y < -0.03) {
-            float pat = caustic(cc * 0.45, uCTime * 0.35);
-            float lit = inBeam(wp, uLightDir);
-            add = pat * (uLightCol * lit * 0.5 + uSkyCol * 0.2);
-          } else if (tn.y < 0.5) {
-            vec2 q = abs(wp.xz - POOL_C) - POOL_H;
+          if (tWP.y < -0.03) {
+            float pat = caustic(tc * 0.45, uCTime * 0.35);
+            add = pat * (uLightCol * inBeam(tWP, uLightDir) * 0.5 + uSkyCol * 0.12);
+          } else if (normalize(vTileN).y < 0.5) {
+            vec2 q = abs(tWP.xz - POOL_C) - POOL_H;
             float m = exp(-length(max(q, 0.0)) * 1.1);
-            if (tn.y > -0.5) m *= smoothstep(0.2, 2.8, wp.y) * 0.8;
-            float pat = caustic(cc * 0.3, uCTime * 0.25);
-            add = pat * m * (uLightCol * uWaterLit * 0.14 + uSkyCol * 0.06);
+            if (tVertical) m *= smoothstep(0.2, 2.8, tWP.y) * 0.8;
+            add = caustic(tc * 0.3, uCTime * 0.25) * m * (uLightCol * uWaterLit * 0.14 + uSkyCol * 0.04);
           }
-          outgoingLight += diffuseColor.rgb * add;
+          outgoingLight += diffuseColor.rgb * add * (1.0 - tGrout);
         }
         #include <opaque_fragment>`
       );
   };
-  m.customProgramCacheKey = () => 'pool-tile';
+  m.customProgramCacheKey = () => (cove ? 'pool-tile-cove' : 'pool-tile');
   return m;
 }
 
@@ -98,10 +119,57 @@ function box(x0, x1, y0, y1, z0, z1, material) {
   return mesh;
 }
 
+// Вогнутый скруглённый угол (галтель) — как в настоящих бассейнах, где стена
+// плавно переходит в пол и в потолок.
+function cove(origin, eu, ev, ew, len, r, material, segments = 10) {
+  const pos = [];
+  const nor = [];
+  const uv = [];
+  const idx = [];
+  const along = origin.dot(ew);
+  const p = new THREE.Vector3();
+  const n = new THREE.Vector3();
+  for (let i = 0; i <= segments; i++) {
+    const a = (i / segments) * Math.PI * 0.5;
+    n.copy(eu).multiplyScalar(Math.cos(a)).addScaledVector(ev, Math.sin(a));
+    for (let j = 0; j <= 1; j++) {
+      p.copy(origin).addScaledVector(n, r).addScaledVector(ew, j * len);
+      pos.push(p.x, p.y, p.z);
+      nor.push(-n.x, -n.y, -n.z);
+      uv.push(along + j * len, a * r);
+    }
+    if (i < segments) {
+      const k = i * 2;
+      idx.push(k, k + 1, k + 2, k + 1, k + 3, k + 2);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  const mesh = new THREE.Mesh(g, material);
+  mesh.receiveShadow = true;
+  return mesh;
+}
+
+// Скруглённая кромка (бортик) вдоль ребра.
+function nosing(x0, x1, y, z0, z1, r, material) {
+  const alongX = x1 - x0 > z1 - z0;
+  const len = alongX ? x1 - x0 : z1 - z0;
+  const mesh = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 16, 1), material);
+  if (alongX) mesh.rotation.z = Math.PI / 2;
+  else mesh.rotation.x = Math.PI / 2;
+  mesh.position.set((x0 + x1) / 2, y, (z0 + z1) / 2);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  return mesh;
+}
+
 export function buildRoom(scene, shared) {
-  const tex = makeTileTexture();
-  const tile = makeTileMaterial(tex, new THREE.Color('#ffffff'), shared);
-  const poolTile = makeTileMaterial(tex, new THREE.Color('#c4ecef'), shared);
+  const tile = makeTileMaterial(new THREE.Color('#ffffff'), shared);
+  const coveTile = makeTileMaterial(new THREE.Color('#ffffff'), shared, true);
+  const poolTile = makeTileMaterial(new THREE.Color('#d3f1f2'), shared);
   const group = new THREE.Group();
 
   const { x0, x1, z0, z1, height: H, wall: T, base: B } = ROOM;
@@ -111,29 +179,57 @@ export function buildRoom(scene, shared) {
   group.add(box(x0 - T, x1 + T, B, 0, POOL.z1, z1 + T, tile));
   group.add(box(x0 - T, POOL.x0, B, 0, POOL.z0, POOL.z1, tile));
   group.add(box(POOL.x1, x1 + T, B, 0, POOL.z0, POOL.z1, tile));
-  // Дно бассейна.
+  // Дно и стенки чаши.
   group.add(box(POOL.x0, POOL.x1, B, POOL.bottom, POOL.z0, POOL.z1, poolTile));
-  // Стенки чаши — тонкие облицовки внутри, чтобы они были голубыми.
   const lining = 0.01;
   group.add(box(POOL.x0, POOL.x0 + lining, POOL.bottom, 0, POOL.z0, POOL.z1, poolTile));
   group.add(box(POOL.x1 - lining, POOL.x1, POOL.bottom, 0, POOL.z0, POOL.z1, poolTile));
   group.add(box(POOL.x0, POOL.x1, POOL.bottom, 0, POOL.z0, POOL.z0 + lining, poolTile));
   group.add(box(POOL.x0, POOL.x1, POOL.bottom, 0, POOL.z1 - lining, POOL.z1, poolTile));
 
-  // Потолок.
+  // Ступени во всю ширину бассейна, со скруглёнными кромками.
+  const r = 0.025;
+  for (let i = 0; i < STEPS.count; i++) {
+    const top = -(i + 1) * STEP_RISE;
+    const sx1 = POOL.x0 + (i + 1) * STEPS.tread;
+    group.add(box(POOL.x0, sx1, POOL.bottom, top, POOL.z0 + lining, POOL.z1 - lining, poolTile));
+    group.add(nosing(sx1 - r, sx1 - r, top - r, POOL.z0 + lining, POOL.z1 - lining, r, poolTile));
+  }
+  // Бортик бассейна.
+  group.add(nosing(POOL.x0, POOL.x1, -r, POOL.z0, POOL.z0, r, tile));
+  group.add(nosing(POOL.x0, POOL.x1, -r, POOL.z1, POOL.z1, r, tile));
+  group.add(nosing(POOL.x0, POOL.x0, -r, POOL.z0, POOL.z1, r, tile));
+  group.add(nosing(POOL.x1, POOL.x1, -r, POOL.z0, POOL.z1, r, tile));
+
+  // Потолок и стены.
   group.add(box(x0 - T, x1 + T, H, H + T, z0 - T, z1 + T, tile));
-  // Глухие стены.
   group.add(box(x0 - T, x1 + T, 0, H, z1, z1 + T, tile));
   group.add(box(x0 - T, x0, 0, H, z0, z1, tile));
   group.add(box(x1, x1 + T, 0, H, z0, z1, tile));
-  // Стена с окном.
   group.add(box(x0 - T, x1 + T, 0, WINDOW.y0, z0 - T, z0, tile));
   group.add(box(x0 - T, x1 + T, WINDOW.y1, H, z0 - T, z0, tile));
   group.add(box(x0 - T, WINDOW.x0, WINDOW.y0, WINDOW.y1, z0 - T, z0, tile));
   group.add(box(WINDOW.x1, x1 + T, WINDOW.y0, WINDOW.y1, z0 - T, z0, tile));
 
+  // Галтели: пол–стена, потолок–стена и вертикальные углы.
+  const V = (x, y, z) => new THREE.Vector3(x, y, z);
+  const cr = 0.14;
+  const W = x1 - x0;
+  const D = z1 - z0;
+  for (const [y, dy] of [[cr, -1], [H - cr, 1]]) {
+    group.add(cove(V(x0, y, z0 + cr), V(0, 0, -1), V(0, dy, 0), V(1, 0, 0), W, cr, coveTile));
+    group.add(cove(V(x0, y, z1 - cr), V(0, 0, 1), V(0, dy, 0), V(1, 0, 0), W, cr, coveTile));
+    group.add(cove(V(x0 + cr, y, z0), V(-1, 0, 0), V(0, dy, 0), V(0, 0, 1), D, cr, coveTile));
+    group.add(cove(V(x1 - cr, y, z0), V(1, 0, 0), V(0, dy, 0), V(0, 0, 1), D, cr, coveTile));
+  }
+  for (const [x, sx] of [[x0 + cr, -1], [x1 - cr, 1]]) {
+    for (const [z, sz] of [[z0 + cr, -1], [z1 - cr, 1]]) {
+      group.add(cove(V(x, 0, z), V(sx, 0, 0), V(0, 0, sz), V(0, 1, 0), H, cr, coveTile));
+    }
+  }
+
   // Рама и переплёт окна.
-  const frame = new THREE.MeshStandardMaterial({ color: '#f1f1ec', roughness: 0.55 });
+  const frame = new THREE.MeshStandardMaterial({ color: '#f3f3ee', roughness: 0.4 });
   const fz0 = z0 - T / 2 - 0.04;
   const fz1 = z0 - T / 2 + 0.04;
   const fw = 0.06;
@@ -150,29 +246,6 @@ export function buildRoom(scene, shared) {
   const ym = WINDOW.y0 + (WINDOW.y1 - WINDOW.y0) * 0.62;
   group.add(box(WINDOW.x0, WINDOW.x1, ym - mw / 2, ym + mw / 2, fz0, fz1, frame));
 
-  // Лесенка в бассейн.
-  const metal = new THREE.MeshStandardMaterial({ color: '#e3e7ea', metalness: 1, roughness: 0.22 });
-  for (const z of [-0.25, 0.25]) {
-    const curve = new THREE.CatmullRomCurve3([
-      new THREE.Vector3(-1.38, 0, z),
-      new THREE.Vector3(-1.38, 0.78, z),
-      new THREE.Vector3(-1.27, 0.95, z),
-      new THREE.Vector3(-1.07, 0.96, z),
-      new THREE.Vector3(-0.93, 0.78, z),
-      new THREE.Vector3(-0.91, 0.0, z),
-      new THREE.Vector3(-0.91, -0.9, z),
-    ]);
-    const rail = new THREE.Mesh(new THREE.TubeGeometry(curve, 64, 0.022, 10), metal);
-    rail.castShadow = true;
-    group.add(rail);
-  }
-  for (const y of [-0.3, -0.62]) {
-    const step = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.02, 0.5), metal);
-    step.position.set(-0.9, y, 0);
-    step.castShadow = true;
-    group.add(step);
-  }
-
   scene.add(group);
-  return { tile, poolTile, frame, metal };
+  return { tile, coveTile, poolTile, frame };
 }

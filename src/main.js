@@ -1,10 +1,11 @@
 import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 import { POOL, WINDOW, ROOM, beamFactor } from './layout.js';
 import { DayCycle } from './daycycle.js';
@@ -15,23 +16,22 @@ import { buildMeadow } from './meadow.js';
 import { Ball } from './ball.js';
 import { Player } from './player.js';
 import { SoundScape } from './audio.js';
+import { createDust, GradeShader, VolumetricShader, updateVolumetric } from './effects.js';
 
 const canvas = document.getElementById('scene');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
 const pixelRatio = Math.min(devicePixelRatio, 1.5);
 renderer.setPixelRatio(pixelRatio);
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
+renderer.toneMapping = THREE.AgXToneMapping;
+renderer.toneMappingExposure = 1.0;
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(72, innerWidth / innerHeight, 0.05, 200);
+const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.05, 200);
 
 RectAreaLightUniformsLib.init();
-const pmrem = new THREE.PMREMGenerator(renderer);
-const envMap = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 
 // Общие для кафеля и воды параметры света.
 const shared = {
@@ -51,30 +51,50 @@ scene.add(water.mesh);
 const meadow = buildMeadow(scene);
 const ball = new Ball();
 scene.add(ball.mesh);
+const dust = createDust();
+scene.add(dust.points);
 const player = new Player(camera, canvas);
 const sound = new SoundScape();
 
-// Отражения: кафель лишь чуть глянцевый, металл и мяч — сильнее.
+// Отражения и отражённый свет берутся из самой комнаты: кубическая карта
+// периодически снимается из её центра. Так белый кафель подсвечивает сам себя,
+// а солнечное пятно на полу подсвечивает потолок — дешёвое подобие GI.
+const cubeTarget = new THREE.WebGLCubeRenderTarget(256, { type: THREE.HalfFloatType, generateMipmaps: false });
+const cubeCamera = new THREE.CubeCamera(0.05, 100, cubeTarget);
+cubeCamera.position.set(0.2, 1.4, 0);
+scene.add(cubeCamera);
 const envMats = [
-  [mats.tile, 0.25],
-  [mats.poolTile, 0.25],
-  [mats.frame, 0.3],
-  [mats.metal, 1.0],
-  [ball.mesh.material, 0.6],
+  [mats.tile, 0.85],
+  [mats.coveTile, 0.85],
+  [mats.poolTile, 0.85],
+  [mats.frame, 0.8],
+  [ball.mesh.material, 0.9],
 ];
-for (const [m] of envMats) m.envMap = envMap;
+for (const [m, k] of envMats) {
+  m.envMap = cubeTarget.texture;
+  m.envMapIntensity = k;
+}
+let cubeFrame = 0;
+function captureEnvironment() {
+  water.capturing = true;
+  dust.points.visible = false;
+  cubeCamera.update(renderer, scene);
+  cubeTarget.texture.needsPMREMUpdate = true;
+  water.capturing = false;
+  dust.points.visible = true;
+}
 
-// Свет: солнце/луна через окно, мягкий свет неба из окна и общий рассеянный.
+// Свет: солнце/луна через окно и мягкий свет неба из окна.
 const sunTarget = new THREE.Object3D();
 sunTarget.position.set(-1.2, 0, -1);
 scene.add(sunTarget);
 const sun = new THREE.DirectionalLight(0xffffff, 1);
 sun.target = sunTarget;
 sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.mapSize.set(4096, 4096);
 Object.assign(sun.shadow.camera, { left: -7, right: 7, top: 7, bottom: -7, near: 1, far: 45 });
-sun.shadow.bias = -0.0004;
-sun.shadow.normalBias = 0.02;
+sun.shadow.bias = -0.0003;
+sun.shadow.normalBias = 0.015;
 scene.add(sun);
 
 const hemi = new THREE.HemisphereLight(0xffffff, 0xffffff, 1);
@@ -82,18 +102,33 @@ scene.add(hemi);
 
 const winW = WINDOW.x1 - WINDOW.x0;
 const winH = WINDOW.y1 - WINDOW.y0;
+const winCenter = new THREE.Vector3((WINDOW.x0 + WINDOW.x1) / 2, (WINDOW.y0 + WINDOW.y1) / 2, ROOM.z0);
 const windowLight = new THREE.RectAreaLight(0xffffff, 1, winW, winH);
-windowLight.position.set((WINDOW.x0 + WINDOW.x1) / 2, (WINDOW.y0 + WINDOW.y1) / 2, ROOM.z0 + 0.01);
-windowLight.lookAt(windowLight.position.x, windowLight.position.y, 0);
+windowLight.position.copy(winCenter).setZ(ROOM.z0 + 0.01);
+windowLight.lookAt(winCenter.x, winCenter.y, 0);
 scene.add(windowLight);
 
-const composer = new EffectComposer(renderer);
+// Постобработка: MSAA → затенение в углах (GTAO) → свечение → тонмаппинг → «плёнка».
+const rt = new THREE.WebGLRenderTarget(innerWidth * pixelRatio, innerHeight * pixelRatio, {
+  type: THREE.HalfFloatType,
+  samples: 4,
+});
+const composer = new EffectComposer(renderer, rt);
 composer.setPixelRatio(pixelRatio);
 composer.setSize(innerWidth, innerHeight);
 composer.addPass(new RenderPass(scene, camera));
-const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.35, 0.6, 0.88);
+const gtao = new GTAOPass(scene, camera, innerWidth, innerHeight);
+gtao.updateGtaoMaterial({ radius: 0.6, distanceExponent: 1.5, thickness: 1.5, scale: 1.1, samples: 16 });
+gtao.blendIntensity = 0.85;
+composer.addPass(gtao);
+const volumetric = new ShaderPass(VolumetricShader);
+composer.addPass(volumetric);
+const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.28, 0.75, 0.92);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
+const grade = new ShaderPass(GradeShader);
+grade.uniforms.uRes.value.set(innerWidth, innerHeight);
+composer.addPass(grade);
 
 // Насколько вода сейчас в солнечном пятне — от этого зависят отблески на потолке.
 const waterSamples = [];
@@ -109,33 +144,33 @@ for (let i = 0; i < 5; i++) {
 let waterLit = 0;
 
 const white = new THREE.Color(1, 1, 1);
-const tmpColor = new THREE.Color();
+const ambient = new THREE.Color();
 
-function applyLighting() {
+function applyLighting(time) {
   const s = day.s;
   sun.color.copy(s.light);
-  sun.intensity = s.lightInt;
+  sun.intensity = s.lightInt * 2;
   sun.position.copy(sunTarget.position).addScaledVector(s.lightDir, 20);
 
   hemi.color.copy(s.hor).lerp(s.amb, 0.5);
-  hemi.groundColor.copy(s.amb).multiplyScalar(0.7);
-  hemi.intensity = s.ai * 0.9;
+  hemi.groundColor.copy(s.amb).multiplyScalar(0.8);
+  hemi.intensity = s.ai * 0.35;
 
   windowLight.color.copy(s.hor).lerp(white, 0.35);
-  windowLight.intensity = s.ai * 4;
+  windowLight.intensity = s.ai * 5;
 
+  const ld = s.lightDir;
   let lit = 0;
-  for (const p of waterSamples) lit += beamFactor(p, s.lightDir);
+  for (const p of waterSamples) lit += beamFactor(p, ld);
   waterLit += (lit / waterSamples.length - waterLit) * 0.05;
 
-  shared.uLightDir.value.copy(s.lightDir);
+  shared.uLightDir.value.copy(ld);
   shared.uLightCol.value.copy(s.light).multiplyScalar(s.lightInt);
   shared.uSkyCol.value.copy(s.amb).multiplyScalar(s.ai);
   shared.uWaterLit.value = waterLit;
 
-  for (const [m, k] of envMats) m.envMapIntensity = k * s.ai;
-  tmpColor.copy(s.amb).multiplyScalar(s.ai);
-  return tmpColor;
+  dust.update(ld, s.light, s.lightInt, time);
+  return ambient.copy(s.amb).multiplyScalar(s.ai);
 }
 
 // --- Интерфейс ---
@@ -193,13 +228,31 @@ slider.addEventListener('pointerdown', () => (dragging = true));
 addEventListener('pointerup', () => (dragging = false));
 slider.addEventListener('input', () => {
   day.t = slider.value / 1000;
+  cubeFrame = 0;
 });
 soundBtn.addEventListener('click', () => {
   soundBtn.textContent = sound.toggleMute() ? 'Звук выкл.' : 'Звук вкл.';
 });
 
+// Качество: на слабых машинах отключаем затенение углов и объёмный свет.
+const qualityBtn = document.getElementById('quality');
+let highQuality = true;
+function setQuality(high) {
+  highQuality = high;
+  gtao.enabled = high;
+  volumetric.enabled = high;
+  const pr = high ? pixelRatio : 1;
+  renderer.setPixelRatio(pr);
+  composer.setPixelRatio(pr);
+  renderer.setSize(innerWidth, innerHeight);
+  composer.setSize(innerWidth, innerHeight);
+  qualityBtn.textContent = high ? 'Высокое' : 'Быстрое';
+}
+qualityBtn.addEventListener('click', () => setQuality(!highQuality));
+
 addEventListener('keydown', (e) => {
   if (e.code === 'KeyH') panel.classList.toggle('hidden');
+  if (e.code === 'KeyQ') setQuality(!highQuality);
   if (e.code === 'KeyP') setPaused(!day.paused);
   if (e.code === 'KeyM') soundBtn.click();
 });
@@ -209,6 +262,8 @@ addEventListener('resize', () => {
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
   composer.setSize(innerWidth, innerHeight);
+  gtao.setSize(innerWidth, innerHeight);
+  grade.uniforms.uRes.value.set(innerWidth, innerHeight);
 });
 
 // --- Цикл ---
@@ -228,16 +283,16 @@ function frame() {
   fx.time = time;
 
   day.update(dt);
-  const ambient = applyLighting();
+  const amb = applyLighting(time);
   sky.update(day.s, time);
   shared.uCTime.value = time;
-  water.update(time, ambient);
+  water.update(time, amb);
   meadow.update(time);
 
   for (const ev of player.update(dt)) {
     if (ev === 'enter') {
-      sound.splash(1);
-      water.ripple(player.pos.x, player.pos.z, 1.8);
+      sound.splash(0.6);
+      water.ripple(player.pos.x, player.pos.z, 1.2);
     } else if (ev === 'water') {
       sound.step('water');
       water.ripple(player.pos.x, player.pos.z, 1);
@@ -255,9 +310,17 @@ function frame() {
   ball.update(dt, player, fx);
   sound.update(dt, day.s.day, day.s.night);
 
+  if (cubeFrame-- <= 0) {
+    captureEnvironment();
+    cubeFrame = 15;
+  }
+
   if (!dragging) slider.value = Math.round(day.t * 1000);
   phaseEl.textContent = day.phase;
   clockEl.textContent = day.clock;
+  grade.uniforms.uTime.value = time;
+  camera.updateMatrixWorld();
+  updateVolumetric(volumetric, camera, day.s.lightDir, day.s.light, day.s.lightInt, time);
 
   composer.render();
   requestAnimationFrame(frame);
@@ -265,4 +328,4 @@ function frame() {
 requestAnimationFrame(frame);
 
 // Для отладки из консоли.
-window.poolRoom = { day, player, ball, camera };
+window.poolRoom = { day, player, ball, camera, renderer, composer, gtao, bloom, scene, cubeTarget };

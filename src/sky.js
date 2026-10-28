@@ -18,6 +18,7 @@ uniform vec3 uMoonDir;
 uniform vec3 uCloud;
 uniform float uStars;
 uniform float uTime;
+uniform float uGain;
 
 float hash3(vec3 p) {
   p = fract(p * 0.3183099 + 0.1);
@@ -42,8 +43,13 @@ void main() {
   vec3 d = normalize(vDir);
   float h = d.y;
   vec3 col = mix(uHorizon, uTop, pow(smoothstep(0.0, 0.45, h), 0.7));
-  // Ниже горизонта — мягкая дымка, без земли.
-  col = mix(col, uHorizon * 0.9, smoothstep(0.0, -0.3, h));
+  // Ниже горизонта — луг, тающий в дымке.
+  if (h < 0.0) {
+    vec2 gp = d.xz / (-h + 0.02);
+    float gn = fbm(gp * 0.6) * 0.6 + fbm(gp * 4.0) * 0.4;
+    vec3 grass = mix(vec3(0.16, 0.26, 0.08), vec3(0.32, 0.42, 0.14), gn) * (dot(uHorizon, vec3(0.333)) * 1.1);
+    col = mix(uHorizon * 0.95, grass, smoothstep(0.0, -0.12, h));
+  }
 
   float sd = max(dot(d, uSunDir), 0.0);
   float sunVis = smoothstep(-0.08, 0.02, uSunDir.y);
@@ -67,7 +73,7 @@ void main() {
     col = mix(col, uCloud, c * 0.8 * smoothstep(0.0, 0.2, h));
   }
 
-  gl_FragColor = vec4(col, 1.0);
+  gl_FragColor = vec4(col * uGain, 1.0);
 }
 `;
 
@@ -81,6 +87,7 @@ export function createSky() {
     uCloud: { value: new THREE.Color() },
     uStars: { value: 0 },
     uTime: { value: 0 },
+    uGain: { value: 1 },
   };
   const material = new THREE.ShaderMaterial({
     uniforms,
@@ -103,6 +110,8 @@ export function createSky() {
     uniforms.uMoonDir.value.copy(s.moonDir);
     uniforms.uStars.value = s.stars;
     uniforms.uTime.value = time;
+    // Снаружи заметно ярче, чем в комнате, — как на настоящем фото против окна.
+    uniforms.uGain.value = 1 + s.ai * 1.6;
     uniforms.uCloud.value.copy(s.hor).lerp(white, 0.55).multiplyScalar(0.35 + s.ai * 0.75).lerp(night, s.stars * 0.85);
   }
 

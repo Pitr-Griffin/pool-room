@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { ROOM, POOL, inPool } from './layout.js';
+import { ROOM, POOL, inPool, poolFloorAt } from './layout.js';
 
 const G = 9.8;
 
@@ -116,7 +116,7 @@ export class Ball {
     pos.addScaledVector(vel, h);
 
     // Пол или дно.
-    const floor = over ? POOL.bottom : 0;
+    const floor = over ? poolFloorAt(pos.x) : 0;
     if (pos.y - r < floor) {
       pos.y = floor + r;
       if (vel.y < 0) {

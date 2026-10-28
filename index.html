@@ -109,7 +109,7 @@
     .info { display: flex; flex-direction: column; flex: 1; }
     #phase { font-weight: 600; font-size: 16px; }
     #clock { color: var(--text-soft); font-variant-numeric: tabular-nums; }
-    #sound { padding: 6px 12px; font-size: 13px; }
+    #sound, #quality { padding: 6px 10px; font-size: 13px; }
     input[type=range] {
       width: 100%;
       appearance: none;
@@ -159,7 +159,8 @@
         <li><b>Мышь</b> осмотреться</li>
         <li><b>Клик</b> пнуть мяч</li>
         <li><b>P</b> пауза времени, <b>H</b> скрыть панель</li>
-        <li><b>M</b> звук, <b>Esc</b> вернуть курсор</li>
+        <li><b>M</b> звук, <b>Q</b> качество графики</li>
+        <li><b>Esc</b> вернуть курсор</li>
       </ul>
       <button id="enter">Войти</button>
     </div>
@@ -175,6 +176,7 @@
         <span id="clock">06:00</span>
       </div>
       <button id="sound">Звук вкл.</button>
+      <button id="quality" title="Q">Высокое</button>
     </div>
     <input id="time" type="range" min="0" max="999" value="15" aria-label="Время суток">
     <p class="hint">Esc, чтобы взять курсор · H скрыть панель</p>
