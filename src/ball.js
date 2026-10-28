@@ -38,7 +38,7 @@ export class Ball {
     this.mesh.castShadow = true;
     this.mesh.receiveShadow = true;
     this.mesh.rotation.set(0.3, 0.8, 0.15);
-    this.pos = new THREE.Vector3(0.75, this.r, -2.35);
+    this.pos = new THREE.Vector3(3.55, this.r, -2.2);
     this.vel = new THREE.Vector3();
     this.wet = false;
     this.rippleT = 0;

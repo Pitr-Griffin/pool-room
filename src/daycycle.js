@@ -30,7 +30,7 @@ const smooth = (a, b, x) => {
 };
 
 export class DayCycle {
-  constructor(duration = 90) {
+  constructor(duration = 120) {
     this.duration = duration;
     this.t = 0.015;
     this.paused = false;

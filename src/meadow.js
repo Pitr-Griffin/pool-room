@@ -158,7 +158,7 @@ export function buildMeadow(scene) {
 
   // Отколотые плитки по краю.
   const shardMat = new THREE.MeshStandardMaterial({ color: '#eef1f1', roughness: 0.35 });
-  for (let i = 0; i < 9; i++) {
+  for (let i = 0; i < 16; i++) {
     const x = MEADOW.x0 + 0.2 + rand() * (MEADOW.x1 - MEADOW.x0 - 0.4);
     const shard = new THREE.Mesh(new THREE.BoxGeometry(0.06 + rand() * 0.08, 0.012, 0.05 + rand() * 0.08), shardMat);
     shard.position.set(x, 0.008, meadowEdge(x) + 0.02 + rand() * 0.05);
@@ -176,7 +176,7 @@ export function buildMeadow(scene) {
 
   const grassMat = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.85 });
   addSway(grassMat, time);
-  const blades = scatter(4600, rand, 0.9);
+  const blades = scatter(8500, rand, 0.9);
   const grass = new THREE.InstancedMesh(bladeGeometry(), grassMat, blades.length);
   blades.forEach(([x, z], i) => {
     e.set((rand() - 0.5) * 0.35, rand() * Math.PI * 2, (rand() - 0.5) * 0.35);
@@ -193,7 +193,7 @@ export function buildMeadow(scene) {
 
   const flowerMat = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.7 });
   addSway(flowerMat, time);
-  const counts = { daisy: 75, buttercup: 60, forgetMeNot: 55, clover: 55, bluebell: 30 };
+  const counts = { daisy: 140, buttercup: 110, forgetMeNot: 100, clover: 100, bluebell: 55 };
   for (const [kind, count] of Object.entries(counts)) {
     const pts = scatter(count, rand, 0.9);
     const mesh = new THREE.InstancedMesh(FLOWERS[kind](), flowerMat, pts.length);

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Pool Room</title>
-  <meta name="description" content="Небольшая лиминальная комната с бассейном, окном и луговой травой. Сутки проходят за полторы минуты.">
+  <meta name="description" content="Небольшая лиминальная комната с бассейном, окном и луговой травой. Сутки проходят за две минуты.">
   <style>
     :root {
       --glass-bg: rgba(46, 62, 78, 0.32);
@@ -105,7 +105,8 @@
       gap: 10px;
     }
     .row { display: flex; align-items: center; gap: 12px; }
-    #play { width: 40px; height: 40px; padding: 0; border-radius: 50%; font-size: 13px; }
+    #play { width: 100%; font-weight: 600; }
+    #play.stopped { background: rgba(255, 214, 160, 0.3); border-color: rgba(255, 220, 170, 0.6); }
     .info { display: flex; flex-direction: column; flex: 1; }
     #phase { font-weight: 600; font-size: 16px; }
     #clock { color: var(--text-soft); font-variant-numeric: tabular-nums; }
@@ -153,12 +154,12 @@
   <div id="intro">
     <div class="glass card">
       <h1>Pool Room</h1>
-      <p>Тихая кафельная комната с бассейном и травой под окном. Сутки проходят за полторы минуты.</p>
+      <p>Тихая кафельная комната с бассейном и травой под окном. Сутки проходят за две минуты.</p>
       <ul class="keys">
         <li><b>WASD</b> ходить, <b>Shift</b> быстрее</li>
         <li><b>Мышь</b> осмотреться</li>
         <li><b>Клик</b> пнуть мяч</li>
-        <li><b>P</b> пауза времени, <b>H</b> скрыть панель</li>
+        <li><b>P</b> остановить время, <b>H</b> скрыть панель</li>
         <li><b>M</b> звук, <b>Q</b> качество графики</li>
         <li><b>Esc</b> вернуть курсор</li>
       </ul>
@@ -170,7 +171,6 @@
 
   <div id="panel" class="glass">
     <div class="row">
-      <button id="play" aria-label="Пауза">❚❚</button>
       <div class="info">
         <span id="phase">Утро</span>
         <span id="clock">06:00</span>
@@ -178,8 +178,9 @@
       <button id="sound">Звук вкл.</button>
       <button id="quality" title="Q">Высокое</button>
     </div>
+    <button id="play" title="P">❚❚  Остановить время</button>
     <input id="time" type="range" min="0" max="999" value="15" aria-label="Время суток">
-    <p class="hint">Esc, чтобы взять курсор · H скрыть панель</p>
+    <p class="hint">P время · Esc курсор · H скрыть · Q качество</p>
   </div>
 
   <script type="module" src="./src/main.js"></script>

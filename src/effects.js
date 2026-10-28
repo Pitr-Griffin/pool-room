@@ -65,7 +65,7 @@ export const VolumetricShader = {
       }
       acc *= dt;
       float phase = 0.6 + 2.4 * pow(max(dot(rd, uLightDir), 0.0), 6.0);
-      gl_FragColor = vec4(base.rgb + uLightCol * acc * phase * 0.009, base.a);
+      gl_FragColor = vec4(base.rgb + uLightCol * acc * phase * 0.005, base.a);
     }
   `,
 };

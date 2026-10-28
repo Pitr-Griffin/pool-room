@@ -67,10 +67,23 @@ void main() {
   float core = smoothstep(0.35, 0.0, length(fract(sp) - 0.5));
   col += vec3(star * core * tw * 3.0) * uStars * smoothstep(0.0, 0.15, h);
 
+  // Плывущие кучевые облака: два слоя с разной скоростью, подсвеченные со стороны солнца.
   if (h > 0.0) {
-    vec2 cp = d.xz / (h + 0.15) * 1.2 + vec2(uTime * 0.012, uTime * 0.004);
-    float c = smoothstep(0.5, 0.85, fbm(cp));
-    col = mix(col, uCloud, c * 0.8 * smoothstep(0.0, 0.2, h));
+    vec2 base = d.xz / (h + 0.12);
+    float fadeH = smoothstep(0.0, 0.18, h);
+    for (int layer = 0; layer < 2; layer++) {
+      float fl = float(layer);
+      vec2 wind = vec2(0.045, 0.012) * (1.0 + fl * 0.6);
+      vec2 cp = base * (0.9 + fl * 0.5) + uTime * wind + fl * 7.3;
+      vec2 warp = vec2(fbm(cp * 0.7 + 3.1), fbm(cp * 0.7 - 1.7));
+      float dens = fbm(cp + warp * 0.8);
+      float c = smoothstep(0.48 + fl * 0.06, 0.78, dens);
+      // Освещённость: смотрим, насколько облако плотнее в сторону солнца.
+      float toward = fbm(cp + warp * 0.8 + normalize(uSunDir.xz + 1e-4) * 0.08);
+      float lit = clamp(0.65 + (dens - toward) * 4.0, 0.25, 1.3);
+      vec3 cc = uCloud * lit + uSunColor * 0.12 * max(lit - 0.8, 0.0) * smoothstep(-0.05, 0.1, uSunDir.y);
+      col = mix(col, cc, c * (0.85 - fl * 0.25) * fadeH);
+    }
   }
 
   gl_FragColor = vec4(col * uGain, 1.0);
@@ -111,7 +124,7 @@ export function createSky() {
     uniforms.uStars.value = s.stars;
     uniforms.uTime.value = time;
     // Снаружи заметно ярче, чем в комнате, — как на настоящем фото против окна.
-    uniforms.uGain.value = 1 + s.ai * 1.6;
+    uniforms.uGain.value = 1 + s.ai * 0.8;
     uniforms.uCloud.value.copy(s.hor).lerp(white, 0.55).multiplyScalar(0.35 + s.ai * 0.75).lerp(night, s.stars * 0.85);
   }
 

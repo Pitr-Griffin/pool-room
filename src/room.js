@@ -239,8 +239,8 @@ export function buildRoom(scene, shared) {
   group.add(box(WINDOW.x0, WINDOW.x0 + fw, WINDOW.y0, WINDOW.y1, fz0, fz1, frame));
   group.add(box(WINDOW.x1 - fw, WINDOW.x1, WINDOW.y0, WINDOW.y1, fz0, fz1, frame));
   const ww = WINDOW.x1 - WINDOW.x0;
-  for (const k of [1 / 3, 2 / 3]) {
-    const x = WINDOW.x0 + ww * k;
+  for (let i = 1; i < WINDOW.panes; i++) {
+    const x = WINDOW.x0 + (ww * i) / WINDOW.panes;
     group.add(box(x - mw / 2, x + mw / 2, WINDOW.y0, WINDOW.y1, fz0, fz1, frame));
   }
   const ym = WINDOW.y0 + (WINDOW.y1 - WINDOW.y0) * 0.62;

@@ -3,8 +3,8 @@
 
 export const ROOM = { x0: -4, x1: 4, z0: -3, z1: 3, height: 3.5, wall: 0.25, base: -1.15 };
 export const POOL = { x0: -1, x1: 3, z0: -1.2, z1: 1.3, bottom: -0.95, water: -0.12 };
-export const WINDOW = { x0: -3.2, x1: 0, y0: 0.7, y1: 2.8 };
-export const MEADOW = { x0: -3.45, x1: 0.25, z0: -3, z1: -1.9 };
+export const WINDOW = { x0: -3.2, x1: 3.0, y0: 0.7, y1: 2.8, panes: 6 };
+export const MEADOW = { x0: -3.45, x1: 3.25, z0: -3, z1: -1.9 };
 export const EYE_HEIGHT = 1.65;
 
 // Ступени из кафеля вдоль западного края бассейна: спускаются от пола к дну.
@@ -52,6 +52,7 @@ export const LAYOUT_GLSL = /* glsl */ `
 #define WIN_X1 ${f(WINDOW.x1)}
 #define WIN_Y0 ${f(WINDOW.y0)}
 #define WIN_Y1 ${f(WINDOW.y1)}
+#define WIN_PANES ${f(WINDOW.panes)}
 #define POOL_C vec2(${f((POOL.x0 + POOL.x1) / 2)}, ${f((POOL.z0 + POOL.z1) / 2)})
 #define POOL_H vec2(${f((POOL.x1 - POOL.x0) / 2)}, ${f((POOL.z1 - POOL.z0) / 2)})
 #define POOL_WATER ${f(POOL.water)}
@@ -65,17 +66,17 @@ float inBeam(vec3 p, vec3 ld) {
        * smoothstep(WIN_Y0, WIN_Y0 + e, h.y) * (1.0 - smoothstep(WIN_Y1 - e, WIN_Y1, h.y));
 }
 
-// То же, но с тенью от переплёта окна (две вертикальные и одна горизонтальная перекладина).
+// То же, но с тенью от переплёта окна (вертикальные перекладины и одна горизонтальная).
 float inBeamFramed(vec3 p, vec3 ld) {
   float b = inBeam(p, ld);
   if (b <= 0.0) return 0.0;
   float t = (ROOM_Z0 - p.z) / ld.z;
   vec2 h = p.xy + ld.xy * t;
-  float w = WIN_X1 - WIN_X0;
-  float m1 = smoothstep(0.012, 0.03, abs(h.x - (WIN_X0 + w / 3.0)));
-  float m2 = smoothstep(0.012, 0.03, abs(h.x - (WIN_X0 + w * 2.0 / 3.0)));
-  float m3 = smoothstep(0.012, 0.03, abs(h.y - (WIN_Y0 + (WIN_Y1 - WIN_Y0) * 0.62)));
-  return b * m1 * m2 * m3;
+  float pane = (WIN_X1 - WIN_X0) / WIN_PANES;
+  float u = (h.x - WIN_X0) / pane;
+  float mv = smoothstep(0.012, 0.03, abs(fract(u + 0.5) - 0.5) * pane);
+  float mh = smoothstep(0.012, 0.03, abs(h.y - (WIN_Y0 + (WIN_Y1 - WIN_Y0) * 0.62)));
+  return b * mv * mh;
 }
 
 // Бегущий узор отблесков воды.

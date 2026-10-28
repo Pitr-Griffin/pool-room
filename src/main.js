@@ -42,7 +42,7 @@ const shared = {
   uWaterLit: { value: 0 },
 };
 
-const day = new DayCycle(90);
+const day = new DayCycle(120);
 const sky = createSky();
 scene.add(sky.mesh);
 const mats = buildRoom(scene, shared);
@@ -64,11 +64,11 @@ const cubeCamera = new THREE.CubeCamera(0.05, 100, cubeTarget);
 cubeCamera.position.set(0.2, 1.4, 0);
 scene.add(cubeCamera);
 const envMats = [
-  [mats.tile, 0.85],
-  [mats.coveTile, 0.85],
-  [mats.poolTile, 0.85],
-  [mats.frame, 0.8],
-  [ball.mesh.material, 0.9],
+  [mats.tile, 0.6],
+  [mats.coveTile, 0.6],
+  [mats.poolTile, 0.6],
+  [mats.frame, 0.6],
+  [ball.mesh.material, 0.7],
 ];
 for (const [m, k] of envMats) {
   m.envMap = cubeTarget.texture;
@@ -86,7 +86,7 @@ function captureEnvironment() {
 
 // Свет: солнце/луна через окно и мягкий свет неба из окна.
 const sunTarget = new THREE.Object3D();
-sunTarget.position.set(-1.2, 0, -1);
+sunTarget.position.set(0, 0, -1);
 scene.add(sunTarget);
 const sun = new THREE.DirectionalLight(0xffffff, 1);
 sun.target = sunTarget;
@@ -157,7 +157,7 @@ function applyLighting(time) {
   hemi.intensity = s.ai * 0.35;
 
   windowLight.color.copy(s.hor).lerp(white, 0.35);
-  windowLight.intensity = s.ai * 5;
+  windowLight.intensity = s.ai * 2.4;
 
   const ld = s.lightDir;
   let lit = 0;
@@ -220,8 +220,8 @@ player.controls.addEventListener('unlock', () => {
 
 function setPaused(p) {
   day.paused = p;
-  playBtn.textContent = p ? '▶' : '❚❚';
-  playBtn.setAttribute('aria-label', p ? 'Продолжить' : 'Пауза');
+  playBtn.textContent = p ? '▶  Запустить время' : '❚❚  Остановить время';
+  playBtn.classList.toggle('stopped', p);
 }
 playBtn.addEventListener('click', () => setPaused(!day.paused));
 slider.addEventListener('pointerdown', () => (dragging = true));
