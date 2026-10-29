@@ -47,12 +47,22 @@ $plugins = @(
   @('heygen-com/hyperframes', 'hyperframes@hyperframes'),
   @('greensock/gsap-skills', 'gsap-skills@gsap-skills'),
   @('Leonxlnx/taste-skill', 'taste-skill@taste-skill'),
-  @('anthropics/skills', 'example-skills@anthropic-agent-skills')
+  @('anthropics/skills', 'example-skills@anthropic-agent-skills'),
+  @('pbakaus/impeccable', 'impeccable@impeccable'),
+  @('morluto/rea', 'rea@rea')
 )
 foreach ($p in $plugins) {
   & $claude plugin marketplace add $p[0]
   & $claude plugin install $p[1]
 }
+
+# Плагин rea из npm 6.8.0 несёт только скилл, без MCP-сервера — регистрируем сервер сами.
+npm install -g rea-agents@6.8.0
+& $claude mcp add rea -s user '--' "$env:ProgramFiles\nodejs\node.exe" "$(npm root -g)\rea-agents\scripts\rea.mjs" mcp
+
+# DESIGN.md популярных брендов — референсы, не скилл.
+$designMd = "$env:USERPROFILE\.claude\design-md"
+if (-not (Test-Path $designMd)) { git clone --depth 1 https://github.com/VoltAgent/awesome-design-md $designMd }
 
 Step 'Скиллы (~/.claude/skills)'
 Push-Location $env:USERPROFILE

@@ -11,6 +11,7 @@ metadata:
 Installed on 2026-10-29 at the user's request (for future video, motion and editing work):
 - Base: Node.js 26, FFmpeg 9, Python 3.12 (`py -3.12`), uv, yt-dlp, Playwright Chromium, and the `claude` CLI (npm global). A new PowerShell may need its PATH refreshed from the registry.
 - Plugins: hyperframes@hyperframes (`/hyperframes:hyperframes`, plus the `hyperframes` npm CLI), gsap-skills, taste-skill, example-skills@anthropic-agent-skills (canvas-design, algorithmic-art, …).
+- Added 2026-10-29: impeccable@impeccable (design skill `/impeccable …` + PostToolUse hook that scans edited UI files for AI-slop), rea@rea (reverse-engineering skill; its MCP server is registered separately as user-scope `rea` → global npm rea-agents 6.8.0, because the npm plugin ships no MCP manifest). awesome-design-md cloned to ~/.claude/design-md (84 brand DESIGN.md files — reference, not a skill).
 - Skills in ~/.claude/skills: the remotion-* set, product-launch-motion, motion-design, editor and watch (Diffusion Studio), video-use (a junction to C:\Users\hah17\tools\video-use), and threejs-* (13 skills).
 - Repos in C:\Users\hah17\tools: OpenMontage (with .venv and remotion-composer installed), video-use, claude-motion-design.
 - Diffusion Studio desktop app in %LOCALAPPDATA%\DiffusionStudio.
