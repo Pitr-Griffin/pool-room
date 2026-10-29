@@ -70,7 +70,7 @@ function addWetPrint(pos, vel, t) {
 }
 
 const day = new DayCycle(120);
-const sky = createSky(camera);
+const sky = createSky(camera, { video: VIDEO });
 scene.add(sky.mesh);
 // Окно коридора смотрит прямо в небо — внешние стены комнат за ним не видны.
 const corridorSky = sky.portal(CWINDOW.x1 - CWINDOW.x0, CWINDOW.y1 - CWINDOW.y0);

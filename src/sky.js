@@ -26,7 +26,13 @@ float hash3(vec3 p) {
   return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
 }
 uniform float uLightI;
-uniform float uHQ;
+uniform float uSteps;
+uniform float uOct;
+uniform float uLightSteps;
+// Облака: масштаб (больше — крупнее), плотность, скорость дрейфа.
+uniform float uCloudScale;
+uniform float uDensity;
+uniform float uDrift;
 
 // --- Объёмные облака -------------------------------------------------------
 // Слой кучевых облаков на высоте 1–2.1 км (и такой же слой внизу — земли нет).
@@ -64,11 +70,11 @@ float cloudDensity(vec3 p, int oct) {
   float hn = (abs(p.y) - CL0) / (CL1 - CL0);
   if (hn < 0.0 || hn > 1.0) return 0.0;
   // Нижний слой — другой узор, а не отражение верхнего.
-  vec3 q = p * 0.6 + vec3(uTime * 0.014, uTime * 0.002, uTime * 0.005) + step(p.y, 0.0) * vec3(31.7, 0.0, -12.3);
+  vec3 q = p * (0.6 / uCloudScale) + vec3(uTime * 0.014, uTime * 0.002, uTime * 0.005) * uDrift + step(p.y, 0.0) * vec3(31.7, 0.0, -12.3);
   float n = fbm3(q, oct);
   // Кучевая форма: плоское днище, округлый верх; между облаками — чистое небо.
   float shape = smoothstep(0.0, 0.1, hn) * smoothstep(1.0, 0.3, hn);
-  return smoothstep(0.56, 0.7, n * (0.72 + 0.4 * shape)) * shape;
+  return smoothstep(0.56, 0.7, n * (0.72 + 0.4 * shape) * uDensity) * shape;
 }
 
 float hg(float c, float g) {
@@ -81,7 +87,7 @@ vec4 clouds(vec3 d) {
   float t0 = CL0 / ay;
   if (t0 > CL_FAR) return vec4(0.0, 0.0, 0.0, 1.0);
   float t1 = min(CL1 / ay, CL_FAR);
-  int steps = uHQ > 0.5 ? 40 : 14;
+  int steps = int(uSteps);
   float dt = (t1 - t0) / float(steps);
   float t = t0 + dt * fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
   vec3 L = uSunDir.y > 0.0 ? uSunDir : uMoonDir;
@@ -91,15 +97,20 @@ vec4 clouds(vec3 d) {
   vec3 scat = vec3(0.0);
   float T = 1.0;
   const float SIGMA = 9.0;
-  for (int i = 0; i < 40; i++) {
+  for (int i = 0; i < 160; i++) {
     if (i >= steps || T < 0.02) break;
     vec3 p = d * t;
-    float dens = cloudDensity(p, uHQ > 0.5 ? 5 : 3);
+    float dens = cloudDensity(p, int(uOct));
     if (dens > 0.002) {
       // Сколько облака между точкой и солнцем.
       float od = 0.0;
-      for (int j = 1; j <= 4; j++) od += cloudDensity(p + L * 0.11 * float(j), 3);
-      float Tl = exp(-od * 0.11 * SIGMA);
+      int ls = int(uLightSteps);
+      float lstep = 0.44 / uLightSteps;
+      for (int j = 1; j <= 12; j++) {
+        if (j > ls) break;
+        od += cloudDensity(p + L * lstep * float(j), 3);
+      }
+      float Tl = exp(-od * lstep * SIGMA);
       float powder = 1.0 - exp(-dens * 3.0);
       float hn = (abs(p.y) - CL0) / (CL1 - CL0);
       vec3 S = lightCol * Tl * phase * powder * 10.0 + uCloud * (0.18 + 0.5 * hn);
@@ -144,10 +155,17 @@ void main() {
 
 // mainCamera — облака в полном качестве только для основного кадра; в отражениях,
 // кубических картах и т. п. — упрощённые (меньше шагов).
-export function createSky(mainCamera) {
+// video — пресет для ролика: в основном кадре втрое больше шагов, крупные плотные облака,
+// дрейф заметнее; в отражениях — полное качество интерактива, а не упрощённое.
+export function createSky(mainCamera, { video = false } = {}) {
   const uniforms = {
     uLightI: { value: 1 },
-    uHQ: { value: 1 },
+    uSteps: { value: 40 },
+    uOct: { value: 5 },
+    uLightSteps: { value: 4 },
+    uCloudScale: { value: video ? 1.35 : 1 },
+    uDensity: { value: 1 },
+    uDrift: { value: video ? 2.5 : 1 },
     uTop: { value: new THREE.Color() },
     uHorizon: { value: new THREE.Color() },
     uSunDir: { value: new THREE.Vector3(0, 1, 0) },
@@ -168,7 +186,10 @@ export function createSky(mainCamera) {
   const mesh = new THREE.Mesh(new THREE.SphereGeometry(80, 48, 24), material);
   mesh.renderOrder = -1;
   const pickQuality = (renderer, scene, camera) => {
-    uniforms.uHQ.value = camera === mainCamera ? 1 : 0;
+    const main = camera === mainCamera;
+    uniforms.uSteps.value = main ? (video ? 80 : 40) : video ? 40 : 14;
+    uniforms.uOct.value = main || video ? 5 : 3;
+    uniforms.uLightSteps.value = main && video ? 6 : 4;
   };
   mesh.onBeforeRender = pickQuality;
 
