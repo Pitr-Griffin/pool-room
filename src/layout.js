@@ -7,6 +7,13 @@ export const WINDOW = { x0: -3.2, x1: 3.0, y0: 0.7, y1: 2.8, panes: 6 };
 export const MEADOW = { x0: -3.45, x1: 3.25, z0: -3, z1: -1.9 };
 export const EYE_HEIGHT = 1.65;
 
+// Световые колодцы в потолке: проём x0..x1, z0..z1 и шахта высотой well над потолком.
+export const SKYLIGHTS = [
+  { x0: -2.9, x1: -1.9, z0: -0.6, z1: 0.4 },
+  { x0: 0.6, x1: 1.8, z0: -1.7, z1: -0.7 },
+];
+export const WELL = 1.1;
+
 // Ступени из кафеля вдоль западного края бассейна: спускаются от пола к дну.
 export const STEPS = { count: 4, tread: 0.32 };
 export const STEP_RISE = -POOL.bottom / (STEPS.count + 1);
@@ -34,8 +41,24 @@ export function inMeadow(x, z) {
   return x > MEADOW.x0 && x < MEADOW.x1 && z < meadowEdge(x);
 }
 
-// 1, если луч от точки p к источнику света (dir) проходит через окно.
+// 1, если луч от точки p к источнику света проходит сквозь колодец целиком (вход и выход шахты).
+function skylightFactor(p, dir) {
+  if (dir.y <= 0.02 || p.y >= ROOM.height) return 0;
+  for (const s of SKYLIGHTS) {
+    const ok = [ROOM.height, ROOM.height + WELL].every((h) => {
+      const t = (h - p.y) / dir.y;
+      const x = p.x + dir.x * t;
+      const z = p.z + dir.z * t;
+      return x > s.x0 && x < s.x1 && z > s.z0 && z < s.z1;
+    });
+    if (ok) return 1;
+  }
+  return 0;
+}
+
+// 1, если луч от точки p к источнику света (dir) проходит через окно или колодец.
 export function beamFactor(p, dir) {
+  if (skylightFactor(p, dir)) return 1;
   if (dir.z > -0.02 || dir.y <= 0) return 0;
   const t = (ROOM.z0 - p.z) / dir.z;
   const x = p.x + dir.x * t;
@@ -57,26 +80,46 @@ export const LAYOUT_GLSL = /* glsl */ `
 #define POOL_H vec2(${f((POOL.x1 - POOL.x0) / 2)}, ${f((POOL.z1 - POOL.z0) / 2)})
 #define POOL_WATER ${f(POOL.water)}
 
-float inBeam(vec3 p, vec3 ld) {
+#define ROOM_H ${f(ROOM.height)}
+#define WELL_H ${f(WELL)}
+
+float inRect(vec2 h, vec4 r, float e) {
+  return smoothstep(r.x, r.x + e, h.x) * (1.0 - smoothstep(r.y - e, r.y, h.x))
+       * smoothstep(r.z, r.z + e, h.y) * (1.0 - smoothstep(r.w - e, r.w, h.y));
+}
+
+// Луч к солнцу проходит сквозь световой колодец: и через проём в потолке, и через верх шахты.
+float inSkylight(vec3 p, vec3 ld) {
+  if (ld.y <= 0.02 || p.y >= ROOM_H) return 0.0;
+  vec2 a = p.xz + ld.xz * ((ROOM_H - p.y) / ld.y);
+  vec2 b = p.xz + ld.xz * ((ROOM_H + WELL_H - p.y) / ld.y);
+  float s = 0.0;
+${SKYLIGHTS.map((s) => `  s = max(s, inRect(a, vec4(${f(s.x0)}, ${f(s.x1)}, ${f(s.z0)}, ${f(s.z1)}), 0.04) * inRect(b, vec4(${f(s.x0)}, ${f(s.x1)}, ${f(s.z0)}, ${f(s.z1)}), 0.04));`).join("\n")}
+  return s;
+}
+
+float inWindow(vec3 p, vec3 ld) {
   if (ld.z > -0.02 || ld.y <= 0.0) return 0.0;
   float t = (ROOM_Z0 - p.z) / ld.z;
-  vec2 h = p.xy + ld.xy * t;
-  float e = 0.05;
-  return smoothstep(WIN_X0, WIN_X0 + e, h.x) * (1.0 - smoothstep(WIN_X1 - e, WIN_X1, h.x))
-       * smoothstep(WIN_Y0, WIN_Y0 + e, h.y) * (1.0 - smoothstep(WIN_Y1 - e, WIN_Y1, h.y));
+  return inRect(p.xy + ld.xy * t, vec4(WIN_X0, WIN_X1, WIN_Y0, WIN_Y1), 0.05);
+}
+
+float inBeam(vec3 p, vec3 ld) {
+  return max(inWindow(p, ld), inSkylight(p, ld));
 }
 
 // То же, но с тенью от переплёта окна (вертикальные перекладины и одна горизонтальная).
 float inBeamFramed(vec3 p, vec3 ld) {
-  float b = inBeam(p, ld);
-  if (b <= 0.0) return 0.0;
+  float sky = inSkylight(p, ld);
+  float b = inWindow(p, ld);
+  if (b <= 0.0) return sky;
   float t = (ROOM_Z0 - p.z) / ld.z;
   vec2 h = p.xy + ld.xy * t;
   float pane = (WIN_X1 - WIN_X0) / WIN_PANES;
   float u = (h.x - WIN_X0) / pane;
   float mv = smoothstep(0.012, 0.03, abs(fract(u + 0.5) - 0.5) * pane);
   float mh = smoothstep(0.012, 0.03, abs(h.y - (WIN_Y0 + (WIN_Y1 - WIN_Y0) * 0.62)));
-  return b * mv * mh;
+  return max(b * mv * mh, sky);
 }
 
 // Бегущий узор отблесков воды.

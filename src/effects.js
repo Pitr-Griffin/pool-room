@@ -76,7 +76,7 @@ export function updateVolumetric(pass, camera, lightDir, lightCol, intensity, ti
   u.uCamWorld.value.copy(camera.matrixWorld);
   u.uCamPos.value.setFromMatrixPosition(camera.matrixWorld);
   u.uLightDir.value.copy(lightDir);
-  u.uLightCol.value.copy(lightCol).multiplyScalar(lightDir.z < -0.02 ? intensity : 0);
+  u.uLightCol.value.copy(lightCol).multiplyScalar(lightDir.y > 0.02 ? intensity : 0);
   u.uTime.value = time;
 }
 
