@@ -63,9 +63,15 @@ Pop-Location
 
 Step 'MCP for Blender (без телеметрии)'
 & $claude mcp add blender -s user -e DISABLE_TELEMETRY=true '--' uvx mcp-for-blender
-uvx mcp-for-blender install-addon
 $blender = Get-ChildItem 'C:\Program Files\Blender Foundation' -Recurse -Filter blender.exe -ErrorAction SilentlyContinue |
   Select-Object -First 1 -ExpandProperty FullName
+if ($blender) {
+  # На свежем Blender папки аддонов ещё нет, и install-addon её не находит — создаём и подсказываем путь.
+  $addons = & $blender --background --factory-startup --python-expr "import bpy; print('ADDONS=' + bpy.utils.user_resource('SCRIPTS', path='addons', create=True))" 2>$null |
+    Select-String 'ADDONS=' | ForEach-Object { $_.Line.Substring(7) }
+  $env:BLENDERMCP_ADDONS_DIR = $addons
+}
+uvx mcp-for-blender install-addon
 if ($blender) {
   # Без --factory-startup: включаем аддон, не трогая остальные настройки Blender.
   & $blender --background --python-expr "import bpy; bpy.ops.preferences.addon_enable(module='blender_mcp'); bpy.ops.wm.save_userpref()" | Out-Null
