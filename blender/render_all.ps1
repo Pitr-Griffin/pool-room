@@ -8,7 +8,9 @@ $shots = @(
   @('glint', 'CameraPool'),
   @('evening', 'CameraHero'),
   @('night', 'CameraLow'),
-  @('day', 'Camera')
+  @('day', 'Camera'),
+  @('noon', 'CameraMeadow2'),
+  @('evening', 'CameraCorridor')
 )
 foreach ($s in $shots) {
   & $blender --background --factory-startup --python $script -- --time $s[0] --camera $s[1] --samples $Samples --res $Res --save 0 | Select-String 'RENDERED|Error|Traceback'

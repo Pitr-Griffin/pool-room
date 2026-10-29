@@ -41,15 +41,10 @@ float fbm(vec2 p) {
 
 void main() {
   vec3 d = normalize(vDir);
-  float h = d.y;
+  // Земли нет: комната висит в небе, и ниже горизонта — то же небо с облаками.
+  float below = step(d.y, 0.0);
+  float h = abs(d.y);
   vec3 col = mix(uHorizon, uTop, pow(smoothstep(0.0, 0.45, h), 0.7));
-  // Ниже горизонта — луг, тающий в дымке.
-  if (h < 0.0) {
-    vec2 gp = d.xz / (-h + 0.02);
-    float gn = fbm(gp * 0.6) * 0.6 + fbm(gp * 4.0) * 0.4;
-    vec3 grass = mix(vec3(0.16, 0.26, 0.08), vec3(0.32, 0.42, 0.14), gn) * (dot(uHorizon, vec3(0.333)) * 1.1);
-    col = mix(uHorizon * 0.95, grass, smoothstep(0.0, -0.12, h));
-  }
 
   float sd = max(dot(d, uSunDir), 0.0);
   float sunVis = smoothstep(-0.08, 0.02, uSunDir.y);
@@ -69,7 +64,8 @@ void main() {
 
   // Плывущие кучевые облака: два слоя с разной скоростью, подсвеченные со стороны солнца.
   if (h > 0.0) {
-    vec2 base = d.xz / (h + 0.12);
+    // Нижние облака — отдельный узор, а не зеркало верхних.
+    vec2 base = d.xz / (h + 0.12) + below * vec2(13.7, -5.2);
     float fadeH = smoothstep(0.0, 0.18, h);
     for (int layer = 0; layer < 2; layer++) {
       float fl = float(layer);

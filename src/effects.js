@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { ROOM, MEADOW, meadowEdge, LAYOUT_GLSL } from './layout.js';
+import { ROOM, ROOM2, MEADOW, meadowEdge, inMeadow2, LAYOUT_GLSL } from './layout.js';
 
 // Объёмный свет: для каждого пикселя луч от камеры проходит через комнату,
 // и в каждой точке проверяется, освещена ли она солнцем через окно (с тенью переплёта).
@@ -59,7 +59,7 @@ export const VolumetricShader = {
 
       // Выход луча из комнаты.
       vec3 lo = vec3(${ROOM.x0.toFixed(2)}, POOL_WATER, ${ROOM.z0.toFixed(2)});
-      vec3 hi = vec3(${ROOM.x1.toFixed(2)}, ${ROOM.height.toFixed(2)}, ${ROOM.z1.toFixed(2)});
+      vec3 hi = vec3(${ROOM2.x1.toFixed(2)}, ${ROOM.height.toFixed(2)}, ${ROOM.z1.toFixed(2)});
       vec3 inv = 1.0 / rd;
       vec3 t1 = (lo - ro) * inv;
       vec3 t2 = (hi - ro) * inv;
@@ -103,11 +103,12 @@ export function updateVolumetric(pass, camera, lightDir, lightCol, intensity, ti
 const GREY = new THREE.Color(0.8, 0.78, 0.74);
 
 // Пылинки, которые видны только в солнечном луче: медленно дрейфуют и кружатся, матовые.
-export function createDust(count = 40000) {
+export function createDust(count = 90000) {
   const pos = new Float32Array(count * 3);
   const seed = new Float32Array(count);
   for (let i = 0; i < count; i++) {
-    pos[i * 3] = ROOM.x0 + 0.2 + Math.random() * (ROOM.x1 - ROOM.x0 - 0.4);
+    // Обе комнаты и коридор между ними.
+    pos[i * 3] = ROOM.x0 + 0.2 + Math.random() * (ROOM2.x1 - ROOM.x0 - 0.4);
     pos[i * 3 + 1] = 0.05 + Math.random() * (ROOM.height + 0.9);
     pos[i * 3 + 2] = ROOM.z0 + 0.1 + Math.random() * (ROOM.z1 - ROOM.z0 - 0.2);
     seed[i] = Math.random() * 100;
@@ -176,14 +177,26 @@ export function createDust(count = 40000) {
 }
 
 // Светлячки: ночью несколько штук медленно кружат над цветами и мерцают.
-export function createFireflies(count = 14) {
+export function createFireflies(count = 34) {
   const home = new Float32Array(count * 3);
   const seed = new Float32Array(count);
   for (let i = 0; i < count; i++) {
-    const x = MEADOW.x0 + 0.3 + Math.random() * (MEADOW.x1 - MEADOW.x0 - 0.6);
+    let x;
+    let z;
+    if (i < 14) {
+      // Над полосой цветов у окна первой комнаты.
+      x = MEADOW.x0 + 0.3 + Math.random() * (MEADOW.x1 - MEADOW.x0 - 0.6);
+      z = MEADOW.z0 + 0.25 + Math.random() * (meadowEdge(x) - MEADOW.z0 - 0.35);
+    } else {
+      // Над лугом второй комнаты.
+      do {
+        x = ROOM2.x0 + 0.5 + Math.random() * (ROOM2.x1 - ROOM2.x0 - 1);
+        z = ROOM2.z0 + 0.5 + Math.random() * (ROOM2.z1 - ROOM2.z0 - 1);
+      } while (!inMeadow2(x, z, 0.4));
+    }
     home[i * 3] = x;
     home[i * 3 + 1] = 0.3 + Math.random() * 0.45;
-    home[i * 3 + 2] = MEADOW.z0 + 0.25 + Math.random() * (meadowEdge(x) - MEADOW.z0 - 0.35);
+    home[i * 3 + 2] = z;
     seed[i] = Math.random() * 100;
   }
   const geo = new THREE.BufferGeometry();
@@ -350,8 +363,13 @@ export const GradeShader = {
       col.r = texture2D(tDiffuse, vUv + off).r;
       col.g = texture2D(tDiffuse, vUv).g;
       col.b = texture2D(tDiffuse, vUv - off).b;
-      col *= mix(1.0, 0.78, smoothstep(0.08, 0.5, r2));
-      col = clamp((col - 0.5) * 1.08 + 0.5, 0.0, 1.0);
+      // Настроение «отсюда не выбраться»: цвет чуть выцветший и стерильный — холодный, с
+      // зеленоватыми тенями, как под лампами, — и края кадра темнее, будто взгляд сужается.
+      float luma = dot(col, vec3(0.2126, 0.7152, 0.0722));
+      col = mix(vec3(luma), col, 0.8);
+      col *= mix(vec3(0.94, 1.0, 0.98), vec3(1.0, 1.0, 1.02), smoothstep(0.0, 0.6, luma));
+      col *= mix(1.0, 0.68, smoothstep(0.06, 0.5, r2));
+      col = clamp((col - 0.5) * 1.1 + 0.5, 0.0, 1.0);
       float g = fract(sin(dot(vUv * uRes + fract(uTime) * 91.7, vec2(12.9898, 78.233))) * 43758.5453) - 0.5;
       col += g * 0.028;
       gl_FragColor = vec4(col, 1.0);

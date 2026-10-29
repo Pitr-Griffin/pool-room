@@ -7,11 +7,11 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
 
-import { POOL, WINDOW, ROOM, beamFactor } from './layout.js';
+import { POOL, WINDOW, WINDOW2, CWINDOW, CORRIDOR, ROOM, ROOM2, inPool, inShallow, beamFactor } from './layout.js';
 import { DayCycle } from './daycycle.js';
 import { createSky } from './sky.js';
 import { buildRoom, WET_PRINTS } from './room.js';
-import { Water } from './water.js';
+import { Water, POOL_BODY, SHALLOW_BODY } from './water.js';
 import { buildMeadow } from './meadow.js';
 import { Ball } from './ball.js';
 import { Player } from './player.js';
@@ -40,7 +40,6 @@ const shared = {
   uLightCol: { value: new THREE.Color() },
   uSkyCol: { value: new THREE.Color() },
   uWaterLit: { value: 0 },
-  uCaustics: { value: null },
   uWet: { value: Array.from({ length: WET_PRINTS }, () => new THREE.Vector4(0, 0, -100, 0)) },
 };
 // Мокрые следы после выхода из бассейна.
@@ -64,13 +63,42 @@ const sky = createSky();
 scene.add(sky.mesh);
 const enterBtn = document.getElementById('enter');
 enterBtn.disabled = true;
-const mats = await buildRoom(scene, shared, (p) => {
+// Водоёмы: глубокий бассейн первой комнаты и вода по щиколотку в коридоре и второй комнате.
+const bodies = {
+  room1: { ...POOL_BODY, caustics: { value: null } },
+  room2: { ...SHALLOW_BODY, caustics: { value: null } },
+};
+const mats = await buildRoom(scene, shared, bodies, (p) => {
   enterBtn.textContent = p < 1 ? `Загрузка ${Math.round(p * 100)}%` : 'Войти';
 });
 enterBtn.disabled = false;
-const water = new Water(renderer, shared);
-shared.uCaustics.value = water.causticsTexture;
-scene.add(water.mesh);
+// Кадр сцены без воды — общий для преломления в обоих водоёмах.
+const refractTarget = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType });
+function resizeRefraction() {
+  const pr = renderer.getPixelRatio();
+  refractTarget.setSize(Math.floor(innerWidth * pr * 0.6), Math.floor(innerHeight * pr * 0.6));
+}
+resizeRefraction();
+const water = new Water(renderer, shared, POOL_BODY, refractTarget);
+const shallowWater = new Water(renderer, shared, SHALLOW_BODY, refractTarget);
+const waters = [water, shallowWater];
+bodies.room1.caustics.value = water.causticsTexture;
+bodies.room2.caustics.value = shallowWater.causticsTexture;
+for (const w of waters) scene.add(w.mesh);
+// Вода под ногами: глубокий бассейн, мелкая вода или null.
+function waterAt(x, z) {
+  if (inPool(x, z)) return water;
+  return inShallow(x, z) ? shallowWater : null;
+}
+function renderRefraction() {
+  for (const w of waters) w.mesh.visible = false;
+  const prev = renderer.getRenderTarget();
+  renderer.setRenderTarget(refractTarget);
+  renderer.clear();
+  renderer.render(scene, camera);
+  renderer.setRenderTarget(prev);
+  for (const w of waters) w.mesh.visible = true;
+}
 const splash = createSplash();
 scene.add(splash.points);
 const meadow = buildMeadow(scene);
@@ -86,43 +114,50 @@ const sound = new SoundScape();
 // Отражения и отражённый свет берутся из самой комнаты: кубическая карта
 // периодически снимается из её центра. Так белый кафель подсвечивает сам себя,
 // а солнечное пятно на полу подсвечивает потолок — дешёвое подобие GI.
-const cubeTarget = new THREE.WebGLCubeRenderTarget(256, { type: THREE.HalfFloatType, generateMipmaps: false });
-const cubeCamera = new THREE.CubeCamera(0.05, 100, cubeTarget);
-cubeCamera.position.set(0.2, 1.4, 0);
-scene.add(cubeCamera);
-const envMats = [
-  [mats.tile, 0.6],
-  [mats.poolTile, 0.6],
-  [mats.frame, 0.6],
-  [ball.mesh.material, 0.7],
-];
-for (const [m, k] of envMats) {
-  m.envMap = cubeTarget.texture;
-  m.envMapIntensity = k;
-}
+// У каждой комнаты своя карта — снимается из её центра.
+const envProbes = [
+  { at: [0.2, 1.4, 0], mats: [mats.room1.Tile, mats.room1.PoolTile, mats.room1.Soil, mats.frame, ball.mesh.material] },
+  { at: [ROOM2.x0 + 4.2, 1.4, 0], mats: [mats.room2.Tile, mats.room2.PoolTile, mats.room2.Soil] },
+].map(({ at, mats: list }) => {
+  const target = new THREE.WebGLCubeRenderTarget(256, { type: THREE.HalfFloatType, generateMipmaps: false });
+  const cam = new THREE.CubeCamera(0.05, 100, target);
+  cam.position.set(...at);
+  scene.add(cam);
+  for (const m of list) {
+    m.envMap = target.texture;
+    m.envMapIntensity = m === ball.mesh.material ? 0.7 : 0.6;
+  }
+  return { cam, target };
+});
+const cubeTarget = envProbes[0].target;
 let cubeFrame = 0;
+let probeNext = 0;
 function captureEnvironment() {
-  water.capturing = true;
+  for (const w of waters) w.capturing = true;
   dust.points.visible = false;
   fireflies.points.visible = false;
   splash.points.visible = false;
-  cubeCamera.update(renderer, scene);
-  cubeTarget.texture.needsPMREMUpdate = true;
-  water.capturing = false;
+  // Карты комнат обновляются по очереди — вдвое меньше работы за кадр.
+  const probe = envProbes[probeNext];
+  probeNext = (probeNext + 1) % envProbes.length;
+  probe.cam.update(renderer, scene);
+  probe.target.texture.needsPMREMUpdate = true;
+  for (const w of waters) w.capturing = false;
   dust.points.visible = true;
   fireflies.points.visible = true;
   splash.points.visible = true;
 }
 
 // Свет: солнце/луна через окно и мягкий свет неба из окна.
+// Тени накрывают обе комнаты и коридор: центр между ними, охват ±12 м.
 const sunTarget = new THREE.Object3D();
-sunTarget.position.set(0, 0, -1);
+sunTarget.position.set((ROOM.x0 + ROOM2.x1) / 2, 0, 0);
 scene.add(sunTarget);
 const sun = new THREE.DirectionalLight(0xffffff, 1);
 sun.target = sunTarget;
 sun.castShadow = true;
 sun.shadow.mapSize.set(4096, 4096);
-Object.assign(sun.shadow.camera, { left: -7, right: 7, top: 7, bottom: -7, near: 1, far: 45 });
+Object.assign(sun.shadow.camera, { left: -12, right: 12, top: 12, bottom: -12, near: 1, far: 60 });
 sun.shadow.bias = -0.0003;
 sun.shadow.normalBias = 0.015;
 scene.add(sun);
@@ -130,13 +165,19 @@ scene.add(sun);
 const hemi = new THREE.HemisphereLight(0xffffff, 0xffffff, 1);
 scene.add(hemi);
 
-const winW = WINDOW.x1 - WINDOW.x0;
-const winH = WINDOW.y1 - WINDOW.y0;
-const winCenter = new THREE.Vector3((WINDOW.x0 + WINDOW.x1) / 2, (WINDOW.y0 + WINDOW.y1) / 2, ROOM.z0);
-const windowLight = new THREE.RectAreaLight(0xffffff, 1, winW, winH);
-windowLight.position.copy(winCenter).setZ(ROOM.z0 + 0.01);
-windowLight.lookAt(winCenter.x, winCenter.y, 0);
-scene.add(windowLight);
+// Мягкий свет неба из окон: обеих комнат и коридора.
+const windowLights = [
+  [WINDOW, ROOM.z0],
+  [WINDOW2, ROOM.z0],
+  [CWINDOW, CORRIDOR.z0],
+].map(([W, z]) => {
+  const c = new THREE.Vector3((W.x0 + W.x1) / 2, (W.y0 + W.y1) / 2, z);
+  const light = new THREE.RectAreaLight(0xffffff, 1, W.x1 - W.x0, W.y1 - W.y0);
+  light.position.copy(c).setZ(z + 0.01);
+  light.lookAt(c.x, c.y, z + 5);
+  scene.add(light);
+  return light;
+});
 
 // Постобработка: MSAA → затенение в углах (GTAO) → свечение → тонмаппинг → «плёнка».
 const rt = new THREE.WebGLRenderTarget(innerWidth * pixelRatio, innerHeight * pixelRatio, {
@@ -189,8 +230,10 @@ function applyLighting(time) {
   hemi.intensity = s.ai * 0.1;
   mats.setTime(day.t);
 
-  windowLight.color.copy(s.hor).lerp(white, 0.35);
-  windowLight.intensity = s.ai * 1.6;
+  for (const light of windowLights) {
+    light.color.copy(s.hor).lerp(white, 0.35);
+    light.intensity = s.ai * 1.6;
+  }
 
   const ld = s.lightDir;
   let lit = 0;
@@ -280,7 +323,7 @@ function setQuality(high) {
   composer.setPixelRatio(pr);
   renderer.setSize(innerWidth, innerHeight);
   composer.setSize(innerWidth, innerHeight);
-  water.resize();
+  resizeRefraction();
   qualityBtn.textContent = high ? 'Высокое' : 'Быстрое';
 }
 qualityBtn.addEventListener('click', () => setQuality(!highQuality));
@@ -298,7 +341,7 @@ addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
   composer.setSize(innerWidth, innerHeight);
   gtao.setSize(innerWidth, innerHeight);
-  water.resize();
+  resizeRefraction();
   grade.uniforms.uRes.value.set(innerWidth, innerHeight);
 });
 
@@ -314,6 +357,7 @@ const fx = {
     if (a > 1) splash.burst(x, POOL.water, z, Math.round(a * 14), 1.6);
   },
 };
+const res = new THREE.Vector2();
 let idleRipple = 0;
 
 function frame() {
@@ -326,20 +370,25 @@ function frame() {
   sky.update(day.s, time);
   shared.uCTime.value = time;
 
+  const prevPos = player.pos.clone();
   const events = player.update(dt);
+  const { x: px, z: pz } = player.pos;
+  // Вода, в которую вошли (или из которой вышли — по прошлой позиции).
+  const here = waterAt(px, pz) ?? waterAt(prevPos.x, prevPos.z);
+  const deep = here === water;
   for (const ev of events) {
     if (ev === 'enter') {
-      sound.splash(0.8);
-      water.ripple(player.pos.x, player.pos.z, 3, 0.35);
-      splash.burst(player.pos.x, POOL.water, player.pos.z, 70, 2.4);
+      sound.splash(deep ? 0.8 : 0.45);
+      here.ripple(px, pz, deep ? 3 : 1.6, 0.35);
+      splash.burst(px, here.body.level, pz, deep ? 70 : 30, deep ? 2.4 : 1.5);
     } else if (ev === 'exit') {
       wetFeet = 12;
-      water.ripple(player.pos.x, player.pos.z, 0.8, 0.25);
-      splash.burst(player.pos.x, POOL.water, player.pos.z, 15, 1.2);
+      here.ripple(px, pz, 0.8, 0.25);
+      splash.burst(px, here.body.level, pz, 15, 1.2);
     } else if (ev === 'water') {
       sound.step('water');
-      water.ripple(player.pos.x, player.pos.z, 1.1, 0.22);
-      splash.burst(player.pos.x, POOL.water, player.pos.z, 10, 1.4);
+      here.ripple(px, pz, deep ? 1.1 : 0.9, 0.22);
+      splash.burst(px, here.body.level, pz, deep ? 10 : 8, deep ? 1.4 : 1.1);
     } else if (ev === 'tile' || ev === 'grass') {
       sound.step(ev);
       if (ev === 'tile' && wetFeet > 0) addWetPrint(player.pos, player.vel, time);
@@ -347,16 +396,18 @@ function frame() {
   }
   wetFeet -= dt;
   // Волна от ног, пока идёшь по воде, и лёгкое покачивание, когда стоишь.
-  if (player.wasInPool) {
+  const under = waterAt(px, pz);
+  if (under) {
     const sp = Math.hypot(player.vel.x, player.vel.z);
-    if (sp > 0.1) water.ripple(player.pos.x, player.pos.z, sp * 0.09, 0.2);
+    if (sp > 0.1) under.ripple(px, pz, sp * 0.09, 0.2);
     idleRipple -= dt;
     if (idleRipple < 0) {
-      water.ripple(player.pos.x, player.pos.z, 0.25, 0.25);
+      under.ripple(px, pz, 0.25, 0.25);
       idleRipple = 1.4;
     }
   }
-  water.update(time, amb, day.s.lightDir);
+  res.set(renderer.domElement.width, renderer.domElement.height);
+  for (const w of waters) w.update(time, amb, day.s.lightDir, res);
   meadow.update(time, player.pos);
   splash.update(dt);
   ball.update(dt, player, fx);
@@ -374,11 +425,11 @@ function frame() {
   camera.updateMatrixWorld();
   updateVolumetric(volumetric, camera, day.s.lightDir, day.s.light, day.s.lightInt, time);
 
-  water.renderRefraction(scene, camera);
+  renderRefraction();
   composer.render();
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
 
 // Для отладки из консоли.
-window.poolRoom = { day, player, ball, camera, renderer, composer, gtao, bloom, scene, cubeTarget, water, splash };
+window.poolRoom = { day, player, ball, camera, renderer, composer, gtao, bloom, scene, cubeTarget, water, shallowWater, splash };

@@ -46,6 +46,7 @@ def lightmap_uv(obj):
 
 def bake(obj, name, size, samples):
     img = bpy.data.images.new(f"lm_{name}", size, size, float_buffer=True)
+    # Материалы у комнат общие: узел с картинкой текущего запекания делаем активным заново.
     for slot in obj.material_slots:
         nt = slot.material.node_tree
         node = nt.nodes.new("ShaderNodeTexImage")
@@ -74,15 +75,18 @@ def bake(obj, name, size, samples):
     print("BAKED", img.filepath_raw)
 
 
-def export_room(room):
+def export_rooms(rooms):
     bpy.ops.object.select_all(action="DESELECT")
-    room.select_set(True)
+    for room in rooms:
+        room.select_set(True)
     path = os.path.join(OUT, "room.glb")
+    # Имена материалов (Tile, PoolTile, Soil) нужны вебу, чтобы назначить свои шейдеры.
     bpy.ops.export_scene.gltf(
         filepath=path,
         use_selection=True,
         export_format="GLB",
-        export_materials="PLACEHOLDER",
+        export_materials="EXPORT",
+        export_image_format="NONE",
         export_texcoords=True,
         export_normals=True,
         export_apply=True,
@@ -100,11 +104,14 @@ def main():
         pool_room.build(t)
         pool_room.setup_render(samples, (512, 512), os.path.join(OUT, "tmp.png"))
         bpy.data.objects["Haze"].hide_render = True
-        room = bpy.data.objects["Room"]
-        lightmap_uv(room)
+        # Первая комната — lightmap_<t>.exr, коридор со второй комнатой — lightmap_2_<t>.exr.
+        rooms = [(bpy.data.objects["Room"], t), (bpy.data.objects["Room2"], "2_" + t)]
+        for room, _ in rooms:
+            lightmap_uv(room)
         if i == 0:
-            export_room(room)
-        bake(room, t, size, samples)
+            export_rooms([r for r, _ in rooms])
+        for room, name in rooms:
+            bake(room, name, size, samples)
 
 
 if __name__ == "__main__":

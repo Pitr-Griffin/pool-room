@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { EXRLoader } from 'three/addons/loaders/EXRLoader.js';
-import { ROOM, WINDOW, LAYOUT_GLSL } from './layout.js';
+import { ROOM, WINDOW, WINDOW2, CWINDOW, CORRIDOR, LAYOUT_GLSL } from './layout.js';
 
 // Геометрия комнаты и отражённый свет запечены в Blender (blender/bake_web.py):
 // assets/room.glb и по карте освещения на каждое время суток.
@@ -18,12 +18,21 @@ export const LIGHTMAP_KEYS = [
 // глянцевая глазурь, лёгкая неравномерность цвета и грязь в швах; плюс бегущие
 // отблески воды. Раскладка плитки — по UV из Blender (в метрах, непрерывна на стыках).
 // Рассеянный свет берётся из двух карт освещения, смешанных по времени суток.
-export function makeTileMaterial(color, shared, lightmaps) {
+//
+// body — водоём этой комнаты: прямоугольник (для мокрой полосы, каустики и отблесков) и его карта каустики.
+// soil — вместо кафеля земля (пол луговой комнаты): без швов и глазури.
+export function makeTileMaterial(color, shared, lightmaps, body, soil = false) {
   const m = new THREE.MeshStandardMaterial({ color, roughness: 0.15, metalness: 0 });
   m.lightMap = lightmaps.a.value;
   m.lightMapIntensity = 1.0;
+  const f = (v) => v.toFixed(3);
+  m.defines = {
+    BODY_C: `vec2(${f((body.x0 + body.x1) / 2)}, ${f((body.z0 + body.z1) / 2)})`,
+    BODY_H: `vec2(${f((body.x1 - body.x0) / 2)}, ${f((body.z1 - body.z0) / 2)})`,
+  };
+  if (soil) m.defines.SOIL = '';
   m.onBeforeCompile = (shader) => {
-    Object.assign(shader.uniforms, shared, { uLightMapB: lightmaps.b, uLmMix: lightmaps.mix });
+    Object.assign(shader.uniforms, shared, { uLightMapB: lightmaps.b, uLmMix: lightmaps.mix, uCaustics: body.caustics });
     shader.vertexShader = shader.vertexShader
       .replace(
         '#include <common>',
@@ -71,7 +80,7 @@ export function makeTileMaterial(color, shared, lightmaps) {
           return w;
         }
         vec2 poolUv(vec3 p) {
-          return vec2((p.x - (POOL_C.x - POOL_H.x)) / (2.0 * POOL_H.x), (p.z - (POOL_C.y - POOL_H.y)) / (2.0 * POOL_H.y));
+          return vec2((p.x - (BODY_C.x - BODY_H.x)) / (2.0 * BODY_H.x), (p.z - (BODY_C.y - BODY_H.y)) / (2.0 * BODY_H.y));
         }
         float tHash(vec2 p) { return fract(sin(dot(p, vec2(41.3, 289.1))) * 43758.5453); }
         float tNoise(vec2 p) {
@@ -107,7 +116,7 @@ export function makeTileMaterial(color, shared, lightmaps) {
         // Мокрый пол: полоса у бассейна (брызги) и следы.
         float tWet = 0.0;
         if (tAn.y > 0.5 && tWP.y > -0.01) {
-          vec2 q = abs(tWP.xz - POOL_C) - POOL_H;
+          vec2 q = abs(tWP.xz - BODY_C) - BODY_H;
           float dPool = length(max(q, 0.0));
           tWet = (1.0 - smoothstep(0.05, 0.55, dPool)) * smoothstep(0.35, 0.65, tNoise(tc * 2.5));
           tWet = max(tWet, wetPrints(tWP));
@@ -118,14 +127,26 @@ export function makeTileMaterial(color, shared, lightmaps) {
         if (tVertical && tWP.y < -0.005 && tWP.y > -0.155) tileCol = vec3(0.2, 0.42, 0.56) * (0.95 + 0.08 * tVar);
         float tGrime = tNoise(tc * 1.3) * 0.6 + tNoise(tc * 7.0) * 0.4;
         vec3 groutCol = vec3(0.74, 0.76, 0.75) * (0.88 + 0.2 * tGrime);
-        diffuseColor.rgb *= mix(tileCol * (1.0 - tGrime * 0.03), groutCol, tGrout);
-        diffuseColor.rgb *= 1.0 - tWet * mix(0.06, 0.35, tGrout);`
+        #ifdef SOIL
+          // Земля под лугом: тёмная, комковатая, без швов и блеска.
+          tGrout = 0.0;
+          tWet = 0.0;
+          tSlope = vec2(0.0);
+          float sn = tNoise(tWP.xz * 9.0) * 0.6 + tNoise(tWP.xz * 37.0) * 0.4;
+          diffuseColor.rgb = mix(vec3(0.07, 0.05, 0.035), vec3(0.2, 0.15, 0.1), sn);
+        #else
+          diffuseColor.rgb *= mix(tileCol * (1.0 - tGrime * 0.03), groutCol, tGrout);
+          diffuseColor.rgb *= 1.0 - tWet * mix(0.06, 0.35, tGrout);
+        #endif`
       )
       .replace(
         '#include <roughnessmap_fragment>',
         `#include <roughnessmap_fragment>
         roughnessFactor = mix(0.08 + tGrime * 0.08, 0.85, tGrout);
-        roughnessFactor = mix(roughnessFactor, 0.03, tWet);`
+        roughnessFactor = mix(roughnessFactor, 0.03, tWet);
+        #ifdef SOIL
+          roughnessFactor = 1.0;
+        #endif`
       )
       .replace(
         '#include <normal_fragment_maps>',
@@ -150,7 +171,7 @@ export function makeTileMaterial(color, shared, lightmaps) {
             add = uLightCol * c * 0.32 + uSkyCol * 0.08 * caustic(tc * 0.45, uCTime * 0.35);
           } else if (normalize(vTileN).y < 0.5) {
             // Отблески от воды на потолке и стенах повторяют узор настоящих волн.
-            vec2 q = abs(tWP.xz - POOL_C) - POOL_H;
+            vec2 q = abs(tWP.xz - BODY_C) - BODY_H;
             float m = exp(-length(max(q, 0.0)) * 1.1);
             if (tVertical) m *= smoothstep(0.2, 2.8, tWP.y) * 0.8;
             vec2 puv = clamp(poolUv(tWP) * 0.9 + 0.05, 0.0, 1.0);
@@ -163,7 +184,7 @@ export function makeTileMaterial(color, shared, lightmaps) {
         #include <opaque_fragment>`
       );
   };
-  m.customProgramCacheKey = () => 'pool-tile-baked';
+  m.customProgramCacheKey = () => `pool-tile-baked-${m.defines.BODY_C}-${soil}`;
   return m;
 }
 
@@ -175,33 +196,30 @@ function box(x0, x1, y0, y1, z0, z1, material) {
   return mesh;
 }
 
-function buildWindowFrame(group, frame) {
-  const { z0, wall: T } = ROOM;
-  const fz0 = z0 - T / 2 - 0.04;
-  const fz1 = z0 - T / 2 + 0.04;
+// Рама с переплётом; zc — середина толщины стены, в которой стоит окно.
+function buildWindowFrame(group, frame, W, zc) {
+  const fz0 = zc - 0.04;
+  const fz1 = zc + 0.04;
   const fw = 0.07;
   const mw = 0.04;
-  group.add(box(WINDOW.x0, WINDOW.x1, WINDOW.y0, WINDOW.y0 + fw, fz0, fz1, frame));
-  group.add(box(WINDOW.x0, WINDOW.x1, WINDOW.y1 - fw, WINDOW.y1, fz0, fz1, frame));
-  group.add(box(WINDOW.x0, WINDOW.x0 + fw, WINDOW.y0, WINDOW.y1, fz0, fz1, frame));
-  group.add(box(WINDOW.x1 - fw, WINDOW.x1, WINDOW.y0, WINDOW.y1, fz0, fz1, frame));
-  const ww = WINDOW.x1 - WINDOW.x0;
-  for (let i = 1; i < WINDOW.panes; i++) {
-    const x = WINDOW.x0 + (ww * i) / WINDOW.panes;
-    group.add(box(x - mw / 2, x + mw / 2, WINDOW.y0, WINDOW.y1, fz0, fz1, frame));
+  group.add(box(W.x0, W.x1, W.y0, W.y0 + fw, fz0, fz1, frame));
+  group.add(box(W.x0, W.x1, W.y1 - fw, W.y1, fz0, fz1, frame));
+  group.add(box(W.x0, W.x0 + fw, W.y0, W.y1, fz0, fz1, frame));
+  group.add(box(W.x1 - fw, W.x1, W.y0, W.y1, fz0, fz1, frame));
+  const ww = W.x1 - W.x0;
+  for (let i = 1; i < W.panes; i++) {
+    const x = W.x0 + (ww * i) / W.panes;
+    group.add(box(x - mw / 2, x + mw / 2, W.y0, W.y1, fz0, fz1, frame));
   }
-  const ym = WINDOW.y0 + (WINDOW.y1 - WINDOW.y0) * 0.62;
-  group.add(box(WINDOW.x0, WINDOW.x1, ym - mw / 2, ym + mw / 2, fz0, fz1, frame));
+  const ym = W.y0 + (W.y1 - W.y0) * 0.62;
+  group.add(box(W.x0, W.x1, ym - mw / 2, ym + mw / 2, fz0, fz1, frame));
 }
 
-export async function buildRoom(scene, shared, onProgress = () => {}) {
-  const exr = new EXRLoader();
+async function loadLightmaps(exr, prefix, onEach) {
   const maps = {};
-  let loaded = 0;
-  const total = LIGHTMAP_KEYS.length + 1;
   await Promise.all(
     LIGHTMAP_KEYS.map(async ({ name }) => {
-      const tex = await exr.loadAsync(`./assets/lightmap_${name}.exr`);
+      const tex = await exr.loadAsync(`./assets/lightmap_${prefix}${name}.exr`);
       tex.channel = 1;
       tex.flipY = false;
       // glTF переворачивает V, а EXR из Blender лежит снизу вверх.
@@ -212,30 +230,60 @@ export async function buildRoom(scene, shared, onProgress = () => {}) {
       tex.magFilter = THREE.LinearFilter;
       tex.generateMipmaps = false;
       maps[name] = tex;
-      onProgress(++loaded / total);
+      onEach();
     })
   );
-  const gltf = await new GLTFLoader().loadAsync('./assets/room.glb');
+  return maps;
+}
+
+// bodies — водоёмы первой и второй комнаты: { room1, room2 }, у каждого прямоугольник и
+// uniform-ссылка caustics (текстуру подставит вода, когда будет создана).
+export async function buildRoom(scene, shared, bodies, onProgress = () => {}) {
+  const exr = new EXRLoader();
+  let loaded = 0;
+  const total = LIGHTMAP_KEYS.length * 2 + 1;
+  const tick = () => onProgress(++loaded / total);
+  const [maps1, maps2, gltf] = await Promise.all([
+    loadLightmaps(exr, '', tick),
+    loadLightmaps(exr, '2_', tick),
+    new GLTFLoader().loadAsync('./assets/room.glb'),
+  ]);
   onProgress(1);
 
-  const lightmaps = { a: { value: maps.day }, b: { value: maps.day }, mix: { value: 0 } };
-  const tile = makeTileMaterial(new THREE.Color('#ffffff'), shared, lightmaps);
-  const poolTile = makeTileMaterial(new THREE.Color('#d3f1f2'), shared, lightmaps);
+  // Первая комната и коридор со второй комнатой запечены в разные карты.
+  const rooms = [
+    { maps: maps1, body: bodies.room1 },
+    { maps: maps2, body: bodies.room2 },
+  ];
+  for (const r of rooms) {
+    r.lightmaps = { a: { value: r.maps.day }, b: { value: r.maps.day }, mix: { value: 0 } };
+    r.mats = {
+      Tile: makeTileMaterial(new THREE.Color('#ffffff'), shared, r.lightmaps, r.body),
+      PoolTile: makeTileMaterial(new THREE.Color('#d3f1f2'), shared, r.lightmaps, r.body),
+      Soil: makeTileMaterial(new THREE.Color('#ffffff'), shared, r.lightmaps, r.body, true),
+    };
+  }
 
   const group = new THREE.Group();
   gltf.scene.traverse((o) => {
     if (!o.isMesh) return;
-    // Чаша бассейна целиком ниже пола — по этому и отличаем её материал.
+    // Объект второй комнаты (с коридором) целиком лежит восточнее первой.
     o.geometry.computeBoundingBox();
-    o.material = o.geometry.boundingBox.max.y < 0.05 ? poolTile : tile;
+    const r = o.geometry.boundingBox.max.x > ROOM.x1 + ROOM.wall + 0.5 ? rooms[1] : rooms[0];
+    o.material = r.mats[o.material.name] ?? r.mats.Tile;
     o.castShadow = true;
     o.receiveShadow = true;
   });
   group.add(gltf.scene);
 
   const frame = new THREE.MeshStandardMaterial({ color: '#f3f3ee', roughness: 0.4 });
-  buildWindowFrame(group, frame);
+  const roomZ = ROOM.z0 - ROOM.wall / 2;
+  buildWindowFrame(group, frame, WINDOW, roomZ);
+  buildWindowFrame(group, frame, WINDOW2, roomZ);
+  buildWindowFrame(group, frame, CWINDOW, CORRIDOR.z0 - ROOM.wall / 2);
   scene.add(group);
+
+  const all = rooms.flatMap((r) => Object.values(r.mats));
 
   // t — время суток 0..1; выбирает две ближайшие карты освещения и долю смешивания.
   function setTime(t) {
@@ -247,12 +295,15 @@ export async function buildRoom(scene, shared, onProgress = () => {}) {
     const span = (b.t - a.t + 1) % 1 || 1;
     let f = ((t - a.t + 1) % 1) / span;
     f = f * f * (3 - 2 * f);
-    tile.lightMap = maps[a.name];
-    poolTile.lightMap = maps[a.name];
-    tile.lightMapIntensity = poolTile.lightMapIntensity = a.gain + (b.gain - a.gain) * f;
-    lightmaps.b.value = maps[b.name];
-    lightmaps.mix.value = f;
+    for (const r of rooms) {
+      for (const m of Object.values(r.mats)) {
+        m.lightMap = r.maps[a.name];
+        m.lightMapIntensity = a.gain + (b.gain - a.gain) * f;
+      }
+      r.lightmaps.b.value = r.maps[b.name];
+      r.lightmaps.mix.value = f;
+    }
   }
 
-  return { tile, poolTile, frame, setTime };
+  return { room1: rooms[0].mats, room2: rooms[1].mats, all, frame, setTime };
 }

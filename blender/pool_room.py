@@ -29,6 +29,14 @@ MEADOW = dict(x0=-3.45, x1=3.25, y_wall=3.0, y_edge=1.9)
 # Световые колодцы в потолке (x0, x1, y0, y1) и их высота.
 SKYLIGHTS = [(-2.9, -1.9, -0.4, 0.6), (0.6, 1.8, 0.7, 1.7)]
 WELL = 0.45
+# Вторая (луговая) комната — та же коробка, сдвинутая по x.
+ROOM2_DX = 11.0
+# Коридор между комнатами: проёмы в стенах, пол утоплен, залит водой по щиколотку.
+# Окно — во всю длину стены, обращённой к солнцу (y = y1).
+CORRIDOR = dict(x0=4.0, x1=7.0, y0=-2.6, y1=-1.0, h=2.4, floor=-0.12, water=-0.02)
+CWINDOW = dict(x0=4.25, x1=6.75, z0=-0.12, z1=2.4, panes=3)  # от пола до потолка, во всю стену
+# Мелкий бассейн второй комнаты — продолжение воды коридора.
+SHALLOW = dict(x0=7.0, x1=11.6, y0=-3.0, y1=0.4, floor=-0.12, water=-0.02)  # до самой южной стены
 MICRO_DISPLACEMENT = True  # bake_web.py отключает: для запекания рельеф не нужен
 TILE = 0.15
 
@@ -471,17 +479,87 @@ def add_nosing(bm, uv_layer, start, end, r, mat=0):
         project_uv(f, uv_layer)
 
 
+def build_shell(bm, uv, dx, door_side):
+    """Стены, потолок с колодцами и галтели одной комнаты, сдвинутой на dx.
+    door_side: "x1" — проём в коридор в восточной стене, "x0" — в западной."""
+    R, C = ROOM, CORRIDOR
+    x0, x1, y0, y1, H, T = R["x0"] + dx, R["x1"] + dx, R["y0"], R["y1"], R["h"], R["t"]
+    cy0, cy1, ch = C["y0"], C["y1"], C["h"]
+    skylights = [(s[0] + dx, s[1] + dx, s[2], s[3]) for s in SKYLIGHTS]
+
+    # Потолок с проёмами световых колодцев: режем на прямоугольники вокруг проёмов.
+    xs = sorted({x0 - T, x1 + T, *[s[0] for s in skylights], *[s[1] for s in skylights]})
+    ys = sorted({y0 - T, y1 + T, *[s[2] for s in skylights], *[s[3] for s in skylights]})
+    # Нижняя поверхность — одна сетка с общими вершинами, иначе рельеф раздвигает стыки.
+    grid_v = [[bm.verts.new((x, y, H)) for y in ys] for x in xs]
+    for i in range(len(xs) - 1):
+        for j in range(len(ys) - 1):
+            cx, cy = (xs[i] + xs[i + 1]) / 2, (ys[j] + ys[j + 1]) / 2
+            if any(s[0] < cx < s[1] and s[2] < cy < s[3] for s in skylights):
+                continue
+            f = bm.faces.new((grid_v[i][j], grid_v[i][j + 1], grid_v[i + 1][j + 1], grid_v[i + 1][j]))
+            f.normal_update()
+            if f.normal.z > 0:
+                f.normal_flip()
+            project_uv(f, uv)
+            add_box(bm, uv, xs[i], xs[i + 1], ys[j], ys[j + 1], H + 0.02, H + T)
+    # Стенки колодцев.
+    for sx0, sx1, sy0, sy1 in skylights:
+        top = H + WELL
+        add_box(bm, uv, sx0 - T, sx0, sy0 - T, sy1 + T, H + T, top)
+        add_box(bm, uv, sx1, sx1 + T, sy0 - T, sy1 + T, H + T, top)
+        add_box(bm, uv, sx0, sx1, sy0 - T, sy0, H + T, top)
+        add_box(bm, uv, sx0, sx1, sy1, sy1 + T, H + T, top)
+
+    # Стены. Торцевая стена с проёмом в коридор — из трёх частей.
+    add_box(bm, uv, x0 - T, x1 + T, y0 - T, y0, 0, H)
+    for side, wx0, wx1 in (("x0", x0 - T, x0), ("x1", x1, x1 + T)):
+        if side == door_side:
+            add_box(bm, uv, wx0, wx1, y0, cy0, 0, H)
+            add_box(bm, uv, wx0, wx1, cy1, y1, 0, H)
+            add_box(bm, uv, wx0, wx1, cy0, cy1, ch, H)
+        else:
+            add_box(bm, uv, wx0, wx1, y0, y1, 0, H)
+    W = WINDOW
+    wx0, wx1 = W["x0"] + dx, W["x1"] + dx
+    add_box(bm, uv, x0 - T, x1 + T, y1, y1 + T, 0, W["z0"])
+    add_box(bm, uv, x0 - T, x1 + T, y1, y1 + T, W["z1"], H)
+    add_box(bm, uv, x0 - T, wx0, y1, y1 + T, W["z0"], W["z1"])
+    add_box(bm, uv, wx1, x1 + T, y1, y1 + T, W["z0"], W["z1"])
+
+    # Галтели. У стены с проёмом нижняя галтель обрывается на проёме (и на мелком бассейне).
+    cr = 0.14
+    for z, dz in ((cr, -1), (H - cr, 1)):
+        add_cove(bm, uv, (x0, y1 - cr, z), (0, 1, 0), (0, 0, dz), (1, 0, 0), x1 - x0, cr)
+        add_cove(bm, uv, (x0, y0 + cr, z), (0, -1, 0), (0, 0, dz), (1, 0, 0), x1 - x0, cr)
+        for side, xc, sx in (("x0", x0 + cr, -1), ("x1", x1 - cr, 1)):
+            spans = [(y0, y1)]
+            if side == door_side and dz < 0:
+                gap0, gap1 = (cy0, cy1) if door_side == "x1" else (SHALLOW["y0"], SHALLOW["y1"])
+                spans = [(y0, gap0), (gap1, y1)]
+            for a, b in spans:
+                if b - a > 0.01:
+                    add_cove(bm, uv, (xc, a, z), (sx, 0, 0), (0, 0, dz), (0, 1, 0), b - a, cr)
+    for x, sx in ((x0 + cr, -1), (x1 - cr, 1)):
+        for y, sy in ((y0 + cr, -1), (y1 - cr, 1)):
+            add_cove(bm, uv, (x, y, 0), (sx, 0, 0), (0, sy, 0), (0, 0, 1), H, cr)
+
+
 def build_room(tile, pool_tile):
+    """Первая комната: кафельный пол и глубокий бассейн со ступенями."""
     R, P = ROOM, POOL
     bm = bmesh.new()
     uv = bm.loops.layers.uv.new("UVMap")
-    x0, x1, y0, y1, H, T, B = R["x0"], R["x1"], R["y0"], R["y1"], R["h"], R["t"], R["base"]
+    x0, x1, y0, y1, T, B = R["x0"], R["x1"], R["y0"], R["y1"], R["t"], R["base"]
+    cy0, cy1 = CORRIDOR["y0"], CORRIDOR["y1"]
 
-    # Пол вокруг бассейна.
-    add_box(bm, uv, x0 - T, x1 + T, y0 - T, P["y0"], B, 0)
-    add_box(bm, uv, x0 - T, x1 + T, P["y1"], y1 + T, B, 0)
+    # Пол вокруг бассейна (под восточной стеной — отдельно, чтобы оставить проём в коридор).
+    add_box(bm, uv, x0 - T, x1, y0 - T, P["y0"], B, 0)
+    add_box(bm, uv, x0 - T, x1, P["y1"], y1 + T, B, 0)
     add_box(bm, uv, x0 - T, P["x0"], P["y0"], P["y1"], B, 0)
-    add_box(bm, uv, P["x1"], x1 + T, P["y0"], P["y1"], B, 0)
+    add_box(bm, uv, P["x1"], x1, P["y0"], P["y1"], B, 0)
+    add_box(bm, uv, x1, x1 + T, y0 - T, cy0, B, 0)
+    add_box(bm, uv, x1, x1 + T, cy1, y1 + T, B, 0)
     # Чаша.
     L = 0.01
     add_box(bm, uv, P["x0"], P["x1"], P["y0"], P["y1"], B, P["bottom"], 1)
@@ -504,52 +582,56 @@ def build_room(tile, pool_tile):
         ((P["x1"], P["y0"], -r), (P["x1"], P["y1"], -r)),
     ]:
         add_nosing(bm, uv, a, b, r, 0)
+    # Край пола у спуска в коридор.
+    add_nosing(bm, uv, (x1 - r, cy0, -r), (x1 - r, cy1, -r), r, 0)
 
-    # Потолок с проёмами световых колодцев: режем на прямоугольники вокруг проёмов.
-    xs = sorted({x0 - T, x1 + T, *[s[0] for s in SKYLIGHTS], *[s[1] for s in SKYLIGHTS]})
-    ys = sorted({y0 - T, y1 + T, *[s[2] for s in SKYLIGHTS], *[s[3] for s in SKYLIGHTS]})
-    # Нижняя поверхность — одна сетка с общими вершинами, иначе рельеф раздвигает стыки.
-    grid_v = [[bm.verts.new((x, y, H)) for y in ys] for x in xs]
-    for i in range(len(xs) - 1):
-        for j in range(len(ys) - 1):
-            cx, cy = (xs[i] + xs[i + 1]) / 2, (ys[j] + ys[j + 1]) / 2
-            if any(s[0] < cx < s[1] and s[2] < cy < s[3] for s in SKYLIGHTS):
-                continue
-            f = bm.faces.new((grid_v[i][j], grid_v[i][j + 1], grid_v[i + 1][j + 1], grid_v[i + 1][j]))
-            f.normal_update()
-            if f.normal.z > 0:
-                f.normal_flip()
-            project_uv(f, uv)
-            add_box(bm, uv, xs[i], xs[i + 1], ys[j], ys[j + 1], H + 0.02, H + T)
-    # Стенки колодцев.
-    for sx0, sx1, sy0, sy1 in SKYLIGHTS:
-        top = H + WELL
-        add_box(bm, uv, sx0 - T, sx0, sy0 - T, sy1 + T, H + T, top)
-        add_box(bm, uv, sx1, sx1 + T, sy0 - T, sy1 + T, H + T, top)
-        add_box(bm, uv, sx0, sx1, sy0 - T, sy0, H + T, top)
-        add_box(bm, uv, sx0, sx1, sy1, sy1 + T, H + T, top)
-    # Стены.
-    add_box(bm, uv, x0 - T, x1 + T, y0 - T, y0, 0, H)
-    add_box(bm, uv, x0 - T, x0, y0, y1, 0, H)
-    add_box(bm, uv, x1, x1 + T, y0, y1, 0, H)
-    W = WINDOW
-    add_box(bm, uv, x0 - T, x1 + T, y1, y1 + T, 0, W["z0"])
-    add_box(bm, uv, x0 - T, x1 + T, y1, y1 + T, W["z1"], H)
-    add_box(bm, uv, x0 - T, W["x0"], y1, y1 + T, W["z0"], W["z1"])
-    add_box(bm, uv, W["x1"], x1 + T, y1, y1 + T, W["z0"], W["z1"])
+    build_shell(bm, uv, 0.0, "x1")
+    return finish_room(new_object("Room", bm, [tile, pool_tile]))
 
-    # Галтели.
-    cr = 0.14
-    for z, dz in ((cr, -1), (H - cr, 1)):
-        add_cove(bm, uv, (x0, y1 - cr, z), (0, 1, 0), (0, 0, dz), (1, 0, 0), x1 - x0, cr)
-        add_cove(bm, uv, (x0, y0 + cr, z), (0, -1, 0), (0, 0, dz), (1, 0, 0), x1 - x0, cr)
-        add_cove(bm, uv, (x0 + cr, y0, z), (-1, 0, 0), (0, 0, dz), (0, 1, 0), y1 - y0, cr)
-        add_cove(bm, uv, (x1 - cr, y0, z), (1, 0, 0), (0, 0, dz), (0, 1, 0), y1 - y0, cr)
-    for x, sx in ((x0 + cr, -1), (x1 - cr, 1)):
-        for y, sy in ((y0 + cr, -1), (y1 - cr, 1)):
-            add_cove(bm, uv, (x, y, 0), (sx, 0, 0), (0, sy, 0), (0, 0, 1), H, cr)
 
-    room = new_object("Room", bm, [tile, pool_tile])
+def build_room2(tile, pool_tile, soil):
+    """Коридор и вторая комната: пол — земля под лугом, у входа — бассейн по щиколотку."""
+    R, C, S = ROOM, CORRIDOR, SHALLOW
+    dx = ROOM2_DX
+    bm = bmesh.new()
+    uv = bm.loops.layers.uv.new("UVMap")
+    x0, x1, y0, y1, T, B = R["x0"] + dx, R["x1"] + dx, R["y0"], R["y1"], R["t"], R["base"]
+
+    # Коридор: утопленный кафельный пол, стены, потолок и окно во всю стену со стороны солнца.
+    ch, cf = C["h"], C["floor"]
+    add_box(bm, uv, C["x0"], C["x1"], C["y0"], C["y1"], B, cf, 1)
+    cx0, cx1 = C["x0"] + T, C["x1"] - T
+    add_box(bm, uv, cx0, cx1, C["y0"] - T, C["y0"], cf, ch)
+    add_box(bm, uv, cx0, cx1, C["y0"] - T, C["y1"] + T, ch, ch + T)
+    # Стена со стороны солнца целиком стеклянная (окно — в build_window), под ним — порог под воду.
+    add_box(bm, uv, cx0, cx1, C["y1"], C["y1"] + T, B, cf, 1)
+
+    # Пол второй комнаты — земля (материал 2); под стенами — тоже, его не видно.
+    # Под южной стеной — кафель: бассейн доходит до стены, и торец этой плиты виден под водой.
+    add_box(bm, uv, x0, x1 + T, y0 - T, S["y0"], B, 0, 0)
+    add_box(bm, uv, x0, x1 + T, S["y1"], y1 + T, B, 0, 2)
+    add_box(bm, uv, S["x1"], x1 + T, S["y0"], S["y1"], B, 0, 2)
+    # Основание западной стены — по обе стороны от проёма.
+    add_box(bm, uv, x0 - T, x0, y0 - T, C["y0"], B, 0, 0)
+    add_box(bm, uv, x0 - T, x0, C["y1"], y1 + T, B, 0, 0)
+    # Мелкий бассейн: кафельное дно и облицовка бортов.
+    L = 0.01
+    add_box(bm, uv, S["x0"], S["x1"], S["y0"], S["y1"], B, S["floor"], 1)
+    add_box(bm, uv, S["x1"] - L, S["x1"], S["y0"], S["y1"], S["floor"], 0, 1)
+    add_box(bm, uv, S["x0"], S["x1"], S["y0"], S["y0"] + L, S["floor"], 0, 1)
+    add_box(bm, uv, S["x0"], S["x1"], S["y1"] - L, S["y1"], S["floor"], 0, 1)
+    r = 0.025
+    for a, b in [
+        ((S["x0"], S["y1"], -r), (S["x1"], S["y1"], -r)),
+        ((S["x1"], S["y0"], -r), (S["x1"], S["y1"], -r)),
+    ]:
+        add_nosing(bm, uv, a, b, r, 0)
+
+    build_shell(bm, uv, dx, "x0")
+    return finish_room(new_object("Room2", bm, [tile, pool_tile, soil]))
+
+
+def finish_room(room):
     if MICRO_DISPLACEMENT:
         # Адаптивное подразбиение: геометрия дробится до ~пикселя там, где видна камере.
         sub = room.modifiers.new("Micro", "SUBSURF")
@@ -561,11 +643,10 @@ def build_room(tile, pool_tile):
     return room
 
 
-def build_window(frame_mat, glass_mat):
-    W, R = WINDOW, ROOM
+def build_window(frame_mat, glass_mat, W=WINDOW, yc=ROOM["y1"] + ROOM["t"] / 2, name="Window"):
+    """Рама с переплётом и стекло; W — проём (x0, x1, z0, z1, panes), yc — середина толщины стены."""
     bm = bmesh.new()
     uv = bm.loops.layers.uv.new("UVMap")
-    yc = R["y1"] + R["t"] / 2
     fy0, fy1 = yc - 0.04, yc + 0.04
     fw, mw = 0.07, 0.04
     add_box(bm, uv, W["x0"], W["x1"], fy0, fy1, W["z0"], W["z0"] + fw)
@@ -578,25 +659,25 @@ def build_window(frame_mat, glass_mat):
         add_box(bm, uv, x - mw / 2, x + mw / 2, fy0, fy1, W["z0"], W["z1"])
     zm = W["z0"] + (W["z1"] - W["z0"]) * 0.62
     add_box(bm, uv, W["x0"], W["x1"], fy0, fy1, zm - mw / 2, zm + mw / 2)
-    frame = new_object("WindowFrame", bm, [frame_mat])
+    frame = new_object(name + "Frame", bm, [frame_mat])
 
     bm = bmesh.new()
     grid(bm, 1, 1, lambda u, v: (W["x0"] + u * (W["x1"] - W["x0"]), yc, W["z0"] + v * (W["z1"] - W["z0"])))
-    glass = new_object("WindowGlass", bm, [glass_mat])
+    glass = new_object(name + "Glass", bm, [glass_mat])
     return frame, glass
 
 
-def build_water(mat):
-    P = POOL
+def build_water(mat, name="Water", x0=POOL["x0"], x1=POOL["x1"], y0=POOL["y0"], y1=POOL["y1"],
+                level=POOL["water"], bottom=POOL["bottom"]):
     e = 0.002
     bm = bmesh.new()
     grid(
         bm,
-        240,
-        150,
-        lambda u, v: (P["x0"] + e + u * (P["x1"] - P["x0"] - 2 * e), P["y0"] + e + v * (P["y1"] - P["y0"] - 2 * e), P["water"]),
+        max(8, int((x1 - x0) * 60)),
+        max(8, int((y1 - y0) * 60)),
+        lambda u, v: (x0 + e + u * (x1 - x0 - 2 * e), y0 + e + v * (y1 - y0 - 2 * e), level),
     )
-    obj = new_object("Water", bm, [mat], smooth=True)
+    obj = new_object(name, bm, [mat], smooth=True)
 
     tex = bpy.data.textures.new("Ripples", type="CLOUDS")
     tex.noise_scale = 0.22
@@ -616,7 +697,7 @@ def build_water(mat):
     disp2.mid_level = 0.5
 
     solid = obj.modifiers.new("Depth", "SOLIDIFY")
-    solid.thickness = P["water"] - P["bottom"] - 0.01
+    solid.thickness = level - bottom - 0.005
     solid.offset = -1.0
     return obj
 
@@ -633,7 +714,29 @@ def build_ball(mat):
 # --- Луг ------------------------------------------------------------------
 
 
-def meadow_points(count, rng, accept=1.0):
+def meadow2_points(count, rng, accept=1.0):
+    """Луг на весь пол второй комнаты, кроме мелкого бассейна; к воде трава редеет."""
+    R, S, dx = ROOM, SHALLOW, ROOM2_DX
+    pts = []
+    guard = 0
+    while len(pts) < count and guard < count * 40:
+        guard += 1
+        x = R["x0"] + dx + 0.04 + rng.random() * (R["x1"] - R["x0"] - 0.08)
+        y = R["y0"] + 0.04 + rng.random() * (R["y1"] - R["y0"] - 0.08)
+        ox = max(S["x0"] - x, x - S["x1"], 0)
+        oy = max(S["y0"] - y, y - S["y1"], 0)
+        gap = math.hypot(ox, oy)
+        if gap < 0.1:
+            continue
+        if rng.random() > min(1, (gap - 0.1) / 0.35 + 0.25) * accept:
+            continue
+        pts.append((x, y))
+    return pts
+
+
+def meadow_points(count, rng, accept=1.0, region=1):
+    if region == 2:
+        return meadow2_points(count, rng, accept)
     pts = []
     guard = 0
     while len(pts) < count and guard < count * 40:
@@ -651,11 +754,11 @@ def meadow_points(count, rng, accept=1.0):
     return pts
 
 
-def build_grass(mat, rng):
+def build_grass(mat, rng, region=1, count=16000, name="Grass"):
     bm = bmesh.new()
     col = bm.loops.layers.color.new("Col")
     segs = 4
-    for x, y in meadow_points(16000, rng, 0.9):
+    for x, y in meadow_points(count, rng, 0.9, region):
         h = 0.07 + rng.random() * 0.16
         w = 0.005 + rng.random() * 0.004
         yaw = rng.random() * math.tau
@@ -680,7 +783,7 @@ def build_grass(mat, rng):
             for loop in f.loops:
                 c = a[2] if loop.vert in a[:2] else b[2]
                 loop[col] = (*c, 1)
-    return new_object("Grass", bm, [mat])
+    return new_object(name, bm, [mat])
 
 
 def add_stem(bm, base, h, lean_dir, lean, r=0.0016):
@@ -739,12 +842,12 @@ def add_bell(bm, center, r, mat):
         f.smooth = True
 
 
-def build_flowers(mats, rng):
+def build_flowers(mats, rng, region=1, scale=1, name="Flowers"):
     """Материалы: 0 стебель, 1 белый, 2 жёлтый, 3 голубой, 4 розовато-белый, 5 сиреневый, 6 лист."""
     bm = bmesh.new()
     kinds = [("daisy", 140), ("buttercup", 110), ("forget", 100), ("clover", 100), ("bell", 55)]
     for kind, count in kinds:
-        for x, y in meadow_points(count, rng, 0.9):
+        for x, y in meadow_points(int(count * scale), rng, 0.9, region):
             yaw = rng.random() * math.tau
             ld = Vector((math.cos(yaw), math.sin(yaw), 0))
             s = 0.85 + rng.random() * 0.45
@@ -770,7 +873,7 @@ def build_flowers(mats, rng):
             else:
                 top = add_stem(bm, base, 0.18 * s, ld, 0.05)
                 add_bell(bm, top + ld * 0.006 - Vector((0, 0, 0.008)), 0.007 * s, 5)
-    obj = new_object("Flowers", bm, mats)
+    obj = new_object(name, bm, mats)
     return obj
 
 
@@ -857,17 +960,19 @@ def setup_lighting(time_name):
         tc = N.add("ShaderNodeTexCoord")
         sep = N.add("ShaderNodeSeparateXYZ")
         N.link(tc.outputs["Generated"], sep.inputs[0])
+        # Земли нет: комната висит в небе, ниже горизонта — то же небо.
+        az = N.math("ABSOLUTE", sep.outputs["Z"])
         ramp = N.add("ShaderNodeValToRGB")
         ramp.color_ramp.elements[0].color = (0.9, 1.1, 1.8, 1)
         ramp.color_ramp.elements[1].position = 0.6
         ramp.color_ramp.elements[1].color = (0.12, 0.2, 0.6, 1)
-        N.link(sep.outputs["Z"], ramp.inputs["Fac"])
+        N.link(az, ramp.inputs["Fac"])
         stars = N.add("ShaderNodeTexVoronoi", Scale=180.0, Randomness=1.0)
         N.link(tc.outputs["Generated"], stars.inputs["Vector"])
         dot = N.add("ShaderNodeMapRange", **{"From Min": 0.0, "From Max": 0.035, "To Min": 60.0, "To Max": 0.0})
         N.link(stars.outputs["Distance"], dot.inputs["Value"])
         bright = N.math("MULTIPLY", dot.outputs["Result"], N.math("GREATER_THAN", stars.outputs["Color"], 0.93))
-        bright = N.math("MULTIPLY", bright, N.math("GREATER_THAN", sep.outputs["Z"], 0.03))
+        bright = N.math("MULTIPLY", bright, N.math("GREATER_THAN", az, 0.03))
         N.link(mix_rgb(N, bright, ramp.outputs["Color"], (1.0, 1.0, 1.0, 1), "ADD"), bg.inputs["Color"])
     else:
         sky = N.add("ShaderNodeTexSky", sky_type="MULTIPLE_SCATTERING", sun_disc=False)
@@ -875,20 +980,28 @@ def setup_lighting(time_name):
         sky.sun_rotation = math.atan2(s.x, s.y)
         sky.air_density = 1.0
         sky.aerosol_density = 2.0
-        # Кучевые облака: шум, спроецированный на «потолок» неба.
         tc = N.add("ShaderNodeTexCoord")
         sep = N.add("ShaderNodeSeparateXYZ")
         N.link(tc.outputs["Generated"], sep.inputs[0])
-        zc = N.math("ADD", N.math("MAXIMUM", sep.outputs["Z"], 0.0), 0.22)
+        # Земли нет: комната висит в небе — ниже горизонта то же небо, отражённое по высоте.
+        az = N.math("ABSOLUTE", sep.outputs["Z"])
+        updir = N.add("ShaderNodeCombineXYZ")
+        N.link(sep.outputs["X"], updir.inputs["X"])
+        N.link(sep.outputs["Y"], updir.inputs["Y"])
+        N.link(az, updir.inputs["Z"])
+        N.link(updir.outputs["Vector"], sky.inputs["Vector"])
+        # Кучевые облака: шум, спроецированный на «потолок» неба; внизу — свой узор.
+        below = N.math("MULTIPLY", N.math("LESS_THAN", sep.outputs["Z"], 0.0), 13.7)
+        zc = N.math("ADD", az, 0.22)
         comb = N.add("ShaderNodeCombineXYZ")
-        N.link(N.math("DIVIDE", sep.outputs["X"], zc), comb.inputs["X"])
+        N.link(N.math("ADD", N.math("DIVIDE", sep.outputs["X"], zc), below), comb.inputs["X"])
         N.link(N.math("DIVIDE", sep.outputs["Y"], zc), comb.inputs["Y"])
         noise = N.add("ShaderNodeTexNoise", Scale=2.2, Detail=9.0, Roughness=0.6, Distortion=0.3)
         N.link(comb.outputs["Vector"], noise.inputs["Vector"])
         cover = N.add("ShaderNodeMapRange", **{"From Min": 0.48, "From Max": 0.66, "To Min": 0.0, "To Max": 1.0})
         N.link(noise.outputs["Fac"], cover.inputs["Value"])
         horizon = N.add("ShaderNodeMapRange", **{"From Min": 0.01, "From Max": 0.08, "To Min": 0.0, "To Max": 1.0})
-        N.link(sep.outputs["Z"], horizon.inputs["Value"])
+        N.link(az, horizon.inputs["Value"])
         dens = N.math("MULTIPLY", cover.outputs["Result"], horizon.outputs["Result"])
         cloud_col = tuple(min(1.0, 0.55 + 0.45 * c) * 9.0 * cfg["sky"] for c in cfg["color"]) + (1,)
         N.link(mix_rgb(N, dens, sky.outputs["Color"], cloud_col), bg.inputs["Color"])
@@ -978,11 +1091,26 @@ def build(time_name="day"):
     rng = random.Random(7)
     tile = tile_material("Tile", (0.9, 0.93, 0.96), (0.86, 0.9, 0.94))
     pool_tile = tile_material("PoolTile", (0.78, 0.93, 0.94), (0.72, 0.9, 0.91))
+    soil = soil_material()
     room = build_room(tile, pool_tile)
-    frame, glass = build_window(simple_material("WindowPaint", (0.92, 0.92, 0.89), 0.35), glass_material())
-    water = build_water(water_material())
+    room2 = build_room2(tile, pool_tile, soil)
+    paint, glass_mat = simple_material("WindowPaint", (0.92, 0.92, 0.89), 0.35), glass_material()
+    build_window(paint, glass_mat)
+    W2 = dict(WINDOW, x0=WINDOW["x0"] + ROOM2_DX, x1=WINDOW["x1"] + ROOM2_DX)
+    build_window(paint, glass_mat, W2, name="Window2")
+    build_window(paint, glass_mat, CWINDOW, CORRIDOR["y1"] + ROOM["t"] / 2, name="CorridorWindow")
+    water_mat = water_material()
+    water = build_water(water_mat)
+    C, S = CORRIDOR, SHALLOW
+    waters = [
+        water,
+        build_water(water_mat, "WaterCorridor", C["x0"], C["x1"], C["y0"], C["y1"], C["water"], C["floor"]),
+        build_water(water_mat, "WaterShallow", S["x0"], S["x1"], S["y0"], S["y1"], S["water"], S["floor"]),
+    ]
     ball = build_ball(ball_material())
-    build_grass(grass_material(), rng)
+    grass_mat = grass_material()
+    build_grass(grass_mat, rng)
+    build_grass(grass_mat, rng, region=2, count=80000, name="Grass2")
     flower_mats = [
         simple_material("Stem", (0.08, 0.2, 0.04), 0.5),
         petal_material("PetalWhite", (0.92, 0.92, 0.88)),
@@ -993,27 +1121,21 @@ def build(time_name="day"):
         simple_material("Leaf", (0.06, 0.2, 0.04), 0.5),
     ]
     build_flowers(flower_mats, rng)
-    build_soil(soil_material(), simple_material("Shard", (0.92, 0.93, 0.93), 0.08), rng)
+    build_flowers(flower_mats, rng, region=2, scale=5, name="Flowers2")
+    build_soil(soil, simple_material("Shard", (0.92, 0.93, 0.93), 0.08), rng)
 
     cfg = setup_lighting(time_name)
 
-    # Луг и деревья за окном.
-    haze = tuple(c * 0.5 * cfg["sky"] + 0.35 * cfg["sky"] for c in (0.75, 0.85, 1.0))
-    if cfg.get("moon"):
-        haze = tuple(c * 0.12 for c in haze)
-    bm = bmesh.new()
-    grid(bm, 1, 1, lambda u, v: (-400 + u * 800, 3.3 + v * 600, -0.4))
-    new_object("Field", bm, [field_material(haze)])
-
-    # Лёгкая дымка в комнате — видимые лучи из окна.
+    # Лёгкая дымка в комнатах и коридоре — видимые лучи из окон.
     bm = bmesh.new()
     R = ROOM
-    m = Matrix.Translation((0, 0, R["h"] / 2)) @ Matrix.Diagonal((R["x1"] - R["x0"] - 0.02, R["y1"] - R["y0"] - 0.02, R["h"] - 0.02, 1))
+    xa, xb = R["x0"] + 0.01, R["x1"] + ROOM2_DX - 0.01
+    m = Matrix.Translation(((xa + xb) / 2, 0, R["h"] / 2)) @ Matrix.Diagonal((xb - xa, R["y1"] - R["y0"] - 0.02, R["h"] - 0.02, 1))
     bmesh.ops.create_cube(bm, size=1.0, matrix=m)
     haze = new_object("Haze", bm, [haze_material(cfg["haze"])])
     haze.visible_shadow = False
 
-    for obj, attr in ((water, "is_caustics_caster"), (room, "is_caustics_receiver")):
+    for obj, attr in [*((w, "is_caustics_caster") for w in waters), (room, "is_caustics_receiver"), (room2, "is_caustics_receiver")]:
         try:
             setattr(obj, attr, True)
         except AttributeError:
@@ -1025,6 +1147,9 @@ def build(time_name="day"):
     setup_camera("CameraMeadow", (1.2, 0.8, 1.05), (-0.6, 2.9, 0.15), lens=28)
     setup_camera("CameraHero", (-3.45, -2.65, 1.35), (1.4, 1.6, 0.55), lens=16)
     setup_camera("CameraLow", (3.65, -2.7, 0.32), (-0.6, 1.4, 0.55), lens=18)
+    # Вторая комната: луг и мелкий бассейн из дальнего угла; коридор — из первой комнаты.
+    setup_camera("CameraMeadow2", (14.5, -2.6, 1.45), (8.2, 0.6, 0.25), lens=17)
+    setup_camera("CameraCorridor", (2.4, -1.8, 1.45), (9.5, -1.8, 0.6), lens=20)
     return cfg
 
 
