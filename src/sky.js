@@ -62,19 +62,22 @@ float fbm3(vec3 p, int oct) {
   return v;
 }
 
-const float CL0 = 1.0;
-const float CL1 = 2.1;
+// Облака заполняют весь объём неба от CL_TOP внизу до CL_TOP вверху — и вровень с окном тоже.
+// Где они сгущаются, а где разрывы, решает крупный шум: массы неровные, на разной высоте.
+const float CL_TOP = 2.1;
+// Ближе этого к комнате облаков нет — иначе они бы лезли в окно.
+const float CL_NEAR = 1.2;
 const float CL_FAR = 22.0;
 
 float cloudDensity(vec3 p, int oct) {
-  float hn = (abs(p.y) - CL0) / (CL1 - CL0);
-  if (hn < 0.0 || hn > 1.0) return 0.0;
-  // Нижний слой — другой узор, а не отражение верхнего.
-  vec3 q = p * (0.6 / uCloudScale) + vec3(uTime * 0.014, uTime * 0.002, uTime * 0.005) * uDrift + step(p.y, 0.0) * vec3(31.7, 0.0, -12.3);
+  float ay = abs(p.y);
+  if (ay > CL_TOP) return 0.0;
+  vec3 drift = vec3(uTime * 0.014, uTime * 0.002, uTime * 0.005) * uDrift;
+  vec3 q = p * (0.6 / uCloudScale) + drift;
   float n = fbm3(q, oct);
-  // Кучевая форма: плоское днище, округлый верх; между облаками — чистое небо.
-  float shape = smoothstep(0.0, 0.1, hn) * smoothstep(1.0, 0.3, hn);
-  return smoothstep(0.56, 0.7, n * (0.72 + 0.4 * shape) * uDensity) * shape;
+  float mass = vnoise(p * (0.12 / uCloudScale) + drift * 0.4 + vec3(5.2, 1.3, 8.7));
+  float env = smoothstep(CL_TOP, CL_TOP - 0.6, ay);
+  return smoothstep(0.56, 0.7, n * (0.55 + 0.62 * mass) * uDensity) * env;
 }
 
 float hg(float c, float g) {
@@ -84,9 +87,8 @@ float hg(float c, float g) {
 // rgb — свет, рассеянный облаками; a — сколько неба просвечивает сквозь них.
 vec4 clouds(vec3 d) {
   float ay = max(abs(d.y), 0.02);
-  float t0 = CL0 / ay;
-  if (t0 > CL_FAR) return vec4(0.0, 0.0, 0.0, 1.0);
-  float t1 = min(CL1 / ay, CL_FAR);
+  float t0 = CL_NEAR;
+  float t1 = min(CL_TOP / ay, CL_FAR);
   int steps = int(uSteps);
   float dt = (t1 - t0) / float(steps);
   float t = t0 + dt * fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
@@ -100,7 +102,9 @@ vec4 clouds(vec3 d) {
   for (int i = 0; i < 160; i++) {
     if (i >= steps || T < 0.02) break;
     vec3 p = d * t;
-    float dens = cloudDensity(p, int(uOct));
+    // Вблизи облака тают, вдали растворяются в дымке.
+    float haze = smoothstep(CL_NEAR, CL_NEAR + 1.5, t) * exp(-t * 0.085);
+    float dens = cloudDensity(p, int(uOct)) * haze;
     if (dens > 0.002) {
       // Сколько облака между точкой и солнцем.
       float od = 0.0;
@@ -112,7 +116,7 @@ vec4 clouds(vec3 d) {
       }
       float Tl = exp(-od * lstep * SIGMA);
       float powder = 1.0 - exp(-dens * 3.0);
-      float hn = (abs(p.y) - CL0) / (CL1 - CL0);
+      float hn = (p.y + CL_TOP) / (2.0 * CL_TOP);
       vec3 S = lightCol * Tl * phase * powder * 10.0 + uCloud * (0.18 + 0.5 * hn);
       float a = exp(-dens * dt * SIGMA);
       scat += T * (1.0 - a) * S;
@@ -120,9 +124,7 @@ vec4 clouds(vec3 d) {
     }
     t += dt;
   }
-  // Далёкие облака тают в дымке у горизонта.
-  float fade = exp(-t0 * 0.09);
-  return vec4(scat * fade, mix(1.0, T, fade));
+  return vec4(scat, T);
 }
 void main() {
   vec3 d = normalize(vDir);

@@ -2,3 +2,4 @@
 - [Blender workflow](blender-direct-cli.md) — CLI + bpy by default; MCP for Blender installed for live GUI edits
 - [Installed video tools](installed-video-tools.md) — HyperFrames, Remotion, video-use, OpenMontage, Diffusion Studio, three.js skills; what's left to configure
 - [Skill install policy](skill-install-policy.md) — prefer high-star repos, reject AI-slop, ask before installing my own finds
+- [Casual tone](casual-tone.md) — talk simply, occasional mat is OK when it fits
