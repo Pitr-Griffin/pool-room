@@ -95,6 +95,7 @@ def main():
     o = args()
     os.makedirs(OUT, exist_ok=True)
     size, samples = int(o["size"]), int(o["samples"])
+    pool_room.MICRO_DISPLACEMENT = False
     for i, t in enumerate(o["times"].split(",")):
         pool_room.build(t)
         pool_room.setup_render(samples, (512, 512), os.path.join(OUT, "tmp.png"))

@@ -26,6 +26,10 @@ STEPS = dict(count=4, tread=0.32)
 STEP_RISE = -POOL["bottom"] / (STEPS["count"] + 1)
 WINDOW = dict(x0=-3.2, x1=3.0, z0=0.7, z1=2.8, panes=6)
 MEADOW = dict(x0=-3.45, x1=3.25, y_wall=3.0, y_edge=1.9)
+# Световые колодцы в потолке (x0, x1, y0, y1) и их высота.
+SKYLIGHTS = [(-2.9, -1.9, -0.4, 0.6), (0.6, 1.8, 0.7, 1.7)]
+WELL = 1.1
+MICRO_DISPLACEMENT = True  # bake_web.py отключает: для запекания рельеф не нужен
 TILE = 0.15
 
 
@@ -151,7 +155,7 @@ def tile_material(name, color1, color2):
     )
     brick.inputs["Color1"].default_value = (*color1, 1)
     brick.inputs["Color2"].default_value = (*color2, 1)
-    brick.inputs["Mortar"].default_value = (0.55, 0.57, 0.56, 1)
+    brick.inputs["Mortar"].default_value = (0.5, 0.53, 0.55, 1)
     N.link(uv.outputs["UV"], brick.inputs["Vector"])
 
     # Грязь и неравномерность.
@@ -176,15 +180,46 @@ def tile_material(name, color1, color2):
     c = mix_rgb(N, 0.08, c, noise.outputs["Color"], "MULTIPLY")
     N.link(c, bsdf.inputs["Base Color"])
 
-    # Шов: шероховатый и утопленный; края плитки — скруглённые через сглаженный шов.
-    rough = N.add("ShaderNodeMapRange", **{"From Min": 0.0, "From Max": 1.0, "To Min": 0.04, "To Max": 0.75})
+    # Глазурь: почти зеркальная, со слоем лака; шов матовый.
+    rough = N.add("ShaderNodeMapRange", **{"From Min": 0.0, "From Max": 1.0, "To Min": 0.015, "To Max": 0.8})
     N.link(brick.outputs["Fac"], rough.inputs["Value"])
     N.link(rough.outputs["Result"], bsdf.inputs["Roughness"])
-    height = N.math("SUBTRACT", 1.0, brick.outputs["Fac"])
-    bump = N.add("ShaderNodeBump", Strength=0.55, Distance=0.004)
-    N.link(height, bump.inputs["Height"])
-    N.link(bump.outputs["Normal"], bsdf.inputs["Normal"])
-    bsdf.inputs["Specular IOR Level"].default_value = 0.6
+    bsdf.inputs["Specular IOR Level"].default_value = 0.7
+    coat = N.math("SUBTRACT", 1.0, brick.outputs["Fac"])
+    N.link(N.math("MULTIPLY", coat, 0.5), bsdf.inputs["Coat Weight"])
+    bsdf.inputs["Coat Roughness"].default_value = 0.02
+
+    # Настоящий рельеф (микросмещение геометрии): шов утоплен на 3.5 мм, края плитки
+    # скруглены, каждая плитка уложена с лёгким наклоном, глазурь чуть волнистая.
+    rnd_brick = N.add(
+        "ShaderNodeTexBrick",
+        offset=0.0,
+        squash=1.0,
+        Scale=2.0 / TILE,
+        **{"Brick Width": 1.0, "Row Height": 1.0, "Mortar Size": 0.0, "Bias": 0.0},
+    )
+    rnd_brick.inputs["Color1"].default_value = (0, 0, 0, 1)
+    rnd_brick.inputs["Color2"].default_value = (1, 1, 1, 1)
+    N.link(uv.outputs["UV"], rnd_brick.inputs["Vector"])
+    rnd = N.add("ShaderNodeRGBToBW")
+    N.link(rnd_brick.outputs["Color"], rnd.inputs[0])
+    tx = N.math("SUBTRACT", rnd.outputs[0], 0.5)
+    ty = N.math("SUBTRACT", N.math("FRACT", N.math("MULTIPLY", rnd.outputs[0], 7.31)), 0.5)
+    sep_uv = N.add("ShaderNodeSeparateXYZ")
+    N.link(uv.outputs["UV"], sep_uv.inputs[0])
+    lu = N.math("SUBTRACT", N.math("FRACT", N.math("DIVIDE", sep_uv.outputs["X"], TILE)), 0.5)
+    lv = N.math("SUBTRACT", N.math("FRACT", N.math("DIVIDE", sep_uv.outputs["Y"], TILE)), 0.5)
+    tilt = N.math("ADD", N.math("MULTIPLY", tx, lu), N.math("MULTIPLY", ty, lv))
+    tile_top = N.math("SUBTRACT", 1.0, brick.outputs["Fac"])
+    wave = N.add("ShaderNodeTexNoise", Scale=60.0, Detail=3.0)
+    N.link(uv.outputs["UV"], wave.inputs["Vector"])
+    h = N.math("MULTIPLY", tile_top, 0.0035)
+    h = N.math("ADD", h, N.math("MULTIPLY", N.math("MULTIPLY", tilt, tile_top), 0.0016))
+    h = N.math("ADD", h, N.math("MULTIPLY", N.math("MULTIPLY", wave.outputs["Fac"], tile_top), 0.0004))
+    disp = N.add("ShaderNodeDisplacement", Midlevel=0.0035, Scale=1.0)
+    N.link(h, disp.inputs["Height"])
+    N.link(disp.outputs["Displacement"], out.inputs["Displacement"])
+    m.displacement_method = "BOTH"
     N.link(bsdf.outputs["BSDF"], out.inputs["Surface"])
     return m
 
@@ -360,7 +395,7 @@ def field_material(haze_color, haze_dist=120.0, base=((0.05, 0.12, 0.02), (0.22,
 def haze_material(density):
     m, N = material("Haze")
     out = N.add("ShaderNodeOutputMaterial")
-    vol = N.add("ShaderNodeVolumePrincipled", Density=density, Anisotropy=0.35)
+    vol = N.add("ShaderNodeVolumePrincipled", Density=density, Anisotropy=0.55)
     N.link(vol.outputs["Volume"], out.inputs["Volume"])
     return m
 
@@ -470,8 +505,30 @@ def build_room(tile, pool_tile):
     ]:
         add_nosing(bm, uv, a, b, r, 0)
 
-    # Потолок и стены.
-    add_box(bm, uv, x0 - T, x1 + T, y0 - T, y1 + T, H, H + T)
+    # Потолок с проёмами световых колодцев: режем на прямоугольники вокруг проёмов.
+    xs = sorted({x0 - T, x1 + T, *[s[0] for s in SKYLIGHTS], *[s[1] for s in SKYLIGHTS]})
+    ys = sorted({y0 - T, y1 + T, *[s[2] for s in SKYLIGHTS], *[s[3] for s in SKYLIGHTS]})
+    # Нижняя поверхность — одна сетка с общими вершинами, иначе рельеф раздвигает стыки.
+    grid_v = [[bm.verts.new((x, y, H)) for y in ys] for x in xs]
+    for i in range(len(xs) - 1):
+        for j in range(len(ys) - 1):
+            cx, cy = (xs[i] + xs[i + 1]) / 2, (ys[j] + ys[j + 1]) / 2
+            if any(s[0] < cx < s[1] and s[2] < cy < s[3] for s in SKYLIGHTS):
+                continue
+            f = bm.faces.new((grid_v[i][j], grid_v[i][j + 1], grid_v[i + 1][j + 1], grid_v[i + 1][j]))
+            f.normal_update()
+            if f.normal.z > 0:
+                f.normal_flip()
+            project_uv(f, uv)
+            add_box(bm, uv, xs[i], xs[i + 1], ys[j], ys[j + 1], H + 0.02, H + T)
+    # Стенки колодцев.
+    for sx0, sx1, sy0, sy1 in SKYLIGHTS:
+        top = H + WELL
+        add_box(bm, uv, sx0 - T, sx0, sy0 - T, sy1 + T, H + T, top)
+        add_box(bm, uv, sx1, sx1 + T, sy0 - T, sy1 + T, H + T, top)
+        add_box(bm, uv, sx0, sx1, sy0 - T, sy0, H + T, top)
+        add_box(bm, uv, sx0, sx1, sy1, sy1 + T, H + T, top)
+    # Стены.
     add_box(bm, uv, x0 - T, x1 + T, y0 - T, y0, 0, H)
     add_box(bm, uv, x0 - T, x0, y0, y1, 0, H)
     add_box(bm, uv, x1, x1 + T, y0, y1, 0, H)
@@ -493,6 +550,14 @@ def build_room(tile, pool_tile):
             add_cove(bm, uv, (x, y, 0), (sx, 0, 0), (0, sy, 0), (0, 0, 1), H, cr)
 
     room = new_object("Room", bm, [tile, pool_tile])
+    if MICRO_DISPLACEMENT:
+        # Адаптивное подразбиение: геометрия дробится до ~пикселя там, где видна камере.
+        sub = room.modifiers.new("Micro", "SUBSURF")
+        sub.subdivision_type = "SIMPLE"
+        sub.levels = 0
+        sub.render_levels = 0
+        sub.use_adaptive_subdivision = True
+        sub.adaptive_pixel_size = 1.0
     return room
 
 
@@ -751,10 +816,12 @@ TIMES = {
     # направление на солнце (к солнцу), сила, цвет, сила неба
     "morning": dict(sun=(-0.75, 0.55, 0.25), power=5.0, color=(1.0, 0.8, 0.62), sky=0.6, haze=0.012),
     "day": dict(sun=(-0.35, 0.75, 0.6), power=6.0, color=(1.0, 0.97, 0.92), sky=1.0, haze=0.012),
-    "evening": dict(sun=(0.8, 0.5, 0.18), power=4.5, color=(1.0, 0.62, 0.38), sky=0.5, haze=0.014),
+    "evening": dict(sun=(0.8, 0.5, 0.18), power=5.5, color=(1.0, 0.62, 0.38), sky=0.45, haze=0.08, exposure=0.8),
+    # Высокое солнце: столбы света из колодцев падают на пол и в воду, заливки мало — контрастно.
+    "noon": dict(sun=(-0.2, 0.5, 0.85), power=10.0, color=(1.0, 0.96, 0.9), sky=0.5, haze=0.14, exposure=1.2),
     # Солнце пониже и прямо в окно — луч целиком ложится на воду (для видео с бликами).
     "glint": dict(sun=(0.15, 0.82, 0.5), power=6.5, color=(1.0, 0.94, 0.85), sky=0.9, haze=0.014),
-    "night": dict(sun=(0.4, 0.6, 0.55), power=0.5, color=(0.62, 0.72, 1.0), sky=0.25, haze=0.01, moon=True, exposure=1.6),
+    "night": dict(sun=(0.4, 0.6, 0.55), power=0.5, color=(0.62, 0.72, 1.0), sky=0.25, haze=0.05, moon=True, exposure=1.8),
 }
 
 
@@ -889,11 +956,18 @@ def setup_render(samples, res, out_path):
             break
         except TypeError:
             continue
-    try:
-        vs.look = "AgX - Medium High Contrast"
-    except TypeError:
-        pass
+    for look in ("AgX - High Contrast", "AgX - Medium High Contrast"):
+        try:
+            vs.look = look
+            break
+        except TypeError:
+            continue
     vs.exposure = scene.get("exposure", 0.0)
+    # Баланс белого: убираем зеленоватый отсвет луга, белый кафель — холодно-белый.
+    if hasattr(vs, "use_white_balance"):
+        vs.use_white_balance = True
+        vs.white_balance_temperature = 6200
+        vs.white_balance_tint = 28
 
 
 # --- Сборка ---------------------------------------------------------------
@@ -902,7 +976,7 @@ def setup_render(samples, res, out_path):
 def build(time_name="day"):
     reset_scene()
     rng = random.Random(7)
-    tile = tile_material("Tile", (0.93, 0.95, 0.955), (0.89, 0.92, 0.93))
+    tile = tile_material("Tile", (0.9, 0.93, 0.96), (0.86, 0.9, 0.94))
     pool_tile = tile_material("PoolTile", (0.78, 0.93, 0.94), (0.72, 0.9, 0.91))
     room = build_room(tile, pool_tile)
     frame, glass = build_window(simple_material("WindowPaint", (0.92, 0.92, 0.89), 0.35), glass_material())
@@ -949,6 +1023,8 @@ def build(time_name="day"):
     bpy.context.scene.camera = cam
     setup_camera("CameraPool", (3.6, -2.6, 1.55), (0.6, 0.6, -0.5), lens=22)
     setup_camera("CameraMeadow", (1.2, 0.8, 1.05), (-0.6, 2.9, 0.15), lens=28)
+    setup_camera("CameraHero", (-3.45, -2.65, 1.35), (1.4, 1.6, 0.55), lens=16)
+    setup_camera("CameraLow", (3.65, -2.7, 0.32), (-0.6, 1.4, 0.55), lens=18)
     return cfg
 
 

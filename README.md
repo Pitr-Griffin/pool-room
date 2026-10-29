@@ -38,7 +38,14 @@
 
 ## Фотореалистичная версия (Blender)
 
-Та же комната собрана в Blender и отрендерена в Cycles: физически точный свет, преломление в воде, объёмные лучи из окна. Готовые кадры лежат в папке [`renders/`](renders/).
+Та же комната собрана в Blender и отрендерена в Cycles: физически точный свет, преломление в воде, объёмные лучи из окна и световых колодцев в потолке, настоящий рельеф каждой плитки (утопленные швы, скруглённые кромки, лёгкий перекос — адаптивная микродисплейсмент-геометрия). Готовые кадры 2560×1440 лежат в папке [`renders/`](renders/).
+
+![Pool Room в Blender, полдень](renders/noon_cameralow.png)
+
+| | |
+|---|---|
+| ![полдень](renders/noon_camerahero.png) | ![бассейн](renders/glint_camerapool.png) |
+| ![вечер](renders/evening_camerahero.png) | ![ночь](renders/night_cameralow.png) |
 
 ![Pool Room в Blender, день](renders/day_camera.png)
 
@@ -50,7 +57,7 @@ blender --background --factory-startup --python blender/pool_room.py -- --time d
 
 Видео с бликами на воде — [`renders/pool_room_glint.mp4`](renders/pool_room_glint.mp4) (рендерит `--time glint --video 8`, склеивает `blender/encode_video.py`).
 
-`--time`: `morning`, `day`, `evening`, `night`, `glint`. `--camera`: `Camera`, `CameraPool`, `CameraMeadow`. Скрипт также сохраняет `blender/pool_room.blend`, его можно открыть в Blender и крутить вручную. Все кадры сразу рендерит `blender/render_all.ps1`.
+`--time`: `morning`, `day`, `noon`, `evening`, `night`, `glint`. `--camera`: `Camera`, `CameraHero`, `CameraLow`, `CameraPool`, `CameraMeadow`. Скрипт также сохраняет `blender/pool_room.blend`, его можно открыть в Blender и крутить вручную. Все кадры сразу рендерит `blender/render_all.ps1`.
 
 ## Запуск локально
 
