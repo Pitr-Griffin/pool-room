@@ -16,3 +16,7 @@ Task 3: Note: at 23 s the sun is ~1.5 deg up and out of frame; sunrise timing an
 Task 3: complete (commits f3371f3..d7659f2, tests: bash -c 'cd video && npm test' → ℹ duration_ms 100.0833)
 Task 4: NOT STARTED (underwater view). Before it: cloud rework in src/sky.js (one cloud volume at all heights instead of two layers, per user complaint about empty middle band) — committed unreviewed, check frames 300 and 690 first.
 Resume: next task is Task 4. Check a frame: `cd video && node check.mjs frame 690 out.png` (server: preview "pool-room", port 8123).
+Task 4: Ruling: underwater fog uses analytic water path (ray exits at the surface) — GTAO depth has no water plane from below (single-sided override) — cost if wrong: none
+Task 4: Ruling: opening camera tilted toward the steps (KEYS[0] target) — looking straight up everything sits inside Snell's window and doesn't read as underwater — cost if wrong: opening framing differs from spec text
+Task 4: Ruling: splash drops within 0.5 m of the lens are hidden; breach burst 110 drops — near drops filled the frame as giant blurry bubbles — cost if wrong: breach looks a bit drier
+Task 4: complete (frames 0/60/102/104/108/130 checked: no split surface, deterministic hash on repeat, interactive ok)

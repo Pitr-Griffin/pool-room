@@ -110,6 +110,25 @@ function waterShader(body) {
         vec2 slope = info.ba * ${f(body.slopeGain ?? 1)} + microSlope(vWP.xz);
         vec3 n = normalize(vec3(slope.x, 1.0, slope.y));
         vec3 v = normalize(cameraPosition - vWP);
+        vec2 suv = gl_FragCoord.xy / uRes;
+
+        // Взгляд снизу, из-под воды: в «окне Снеллиуса» — комната над водой, сжатая и
+        // дрожащая на волнах; за критическим углом (48,6° от вертикали) гладь — зеркало,
+        // в котором отражается сама толща воды.
+        if (cameraPosition.y < vWP.y) {
+          vec3 up = -v;
+          float cosW = dot(up, n);
+          vec3 above = texture2D(tRefract, suv - n.xz * 0.12).rgb;
+          float window = smoothstep(0.62, 0.7, cosW);
+          vec3 deep = vec3(0.05, 0.19, 0.21) * (0.35 + uAmb * 0.6);
+          // У края окна — радужная кромка и яркое кольцо полного отражения.
+          float rim = smoothstep(0.55, 0.66, cosW) * (1.0 - window);
+          vec3 col = mix(deep, above * vec3(0.82, 0.95, 0.97), window) + rim * deep * 1.8;
+          float spec = pow(max(dot(refract(up, -n, 1.333), uLightDir), 0.0), 200.0) * 6.0;
+          gl_FragColor = vec4(col + uLightCol * spec * inBeam(vWP, uLightDir) * window, 1.0);
+          return;
+        }
+
         float fres = 0.02 + 0.98 * pow(1.0 - max(dot(n, v), 0.0), 5.0);
 
         vec3 refl = texture2D(tDiffuse, vUvR.xy / vUvR.w + n.xz * 0.08).rgb;
@@ -117,7 +136,6 @@ function waterShader(body) {
         float depth = max(vWP.y - floorAt(vWP.xz), 0.02);
         float path = depth / max(v.y, 0.12);
 
-        vec2 suv = gl_FragCoord.xy / uRes;
         // Сдвиг преломления растёт с глубиной; в мелкой воде — небольшой, но не нулевой.
         vec2 off = n.xz * clamp(depth, 0.15, 0.9) * 0.065;
         vec3 refr = texture2D(tRefract, suv - off).rgb;
@@ -154,6 +172,8 @@ export class Water {
     });
     this.mesh.rotation.x = -Math.PI / 2;
     this.mesh.position.set((body.x0 + body.x1) / 2, body.level, (body.z0 + body.z1) / 2);
+    // Гладь видна и снизу — для кадров из-под воды.
+    this.mesh.material.side = THREE.DoubleSide;
 
     const u = this.mesh.material.uniforms;
     u.tSim.value = this.sim.texture;

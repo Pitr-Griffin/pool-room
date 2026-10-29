@@ -308,7 +308,9 @@ export function createSplash(max = 900) {
     }
   }
 
-  function update(dt, onLand) {
+  // eye — позиция камеры: капли ближе полуметра к объективу не рисуются, иначе они выглядят
+  // огромными мутными пузырями во весь кадр.
+  function update(dt, onLand, eye) {
     for (let k = 0; k < max; k++) {
       if (life[k] <= 0) continue;
       vel[k * 3 + 1] -= 9.8 * dt;
@@ -332,9 +334,11 @@ export function createSplash(max = 900) {
       v.set(vel[k * 3], vel[k * 3 + 1], vel[k * 3 + 2]);
       const speed = v.length();
       q.setFromUnitVectors(up, speed > 1e-4 ? v.multiplyScalar(1 / speed) : up);
-      const r = radius[k] * Math.min(1, life[k] * 6);
-      s.set(r, r + speed * 0.007, r);
-      m.compose(p.set(pos[k * 3], pos[k * 3 + 1], pos[k * 3 + 2]), q, s);
+      p.set(pos[k * 3], pos[k * 3 + 1], pos[k * 3 + 2]);
+      const near = eye ? THREE.MathUtils.smoothstep(p.distanceTo(eye), 0.5, 0.7) : 1;
+      const r = radius[k] * Math.min(1, life[k] * 6) * near;
+      s.set(r, r + speed * 0.007 * near, r);
+      m.compose(p, q, s);
       mesh.setMatrixAt(k, m);
     }
     mesh.instanceMatrix.needsUpdate = true;
@@ -344,6 +348,59 @@ export function createSplash(max = 900) {
 }
 
 // Финальная обработка: лёгкая хроматическая аберрация, виньетка и зерно — как у фото.
+// Под водой: свет гаснет с расстоянием (красный быстрее всего) и тонет в бирюзовой толще,
+// картинка слегка дрожит, контраст падает. uUnder — 0 над водой, 1 под водой.
+export const UnderwaterShader = {
+  uniforms: {
+    tDiffuse: { value: null },
+    tDepth: { value: null },
+    uInvProj: { value: new THREE.Matrix4() },
+    uCamWorld: { value: new THREE.Matrix4() },
+    uCamY: { value: 0 },
+    uLevel: { value: 0 },
+    uUnder: { value: 0 },
+    uTime: { value: 0 },
+    uWater: { value: new THREE.Color() },
+  },
+  vertexShader: /* glsl */ `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: /* glsl */ `
+    uniform sampler2D tDiffuse;
+    uniform sampler2D tDepth;
+    uniform mat4 uInvProj;
+    uniform mat4 uCamWorld;
+    uniform float uCamY;
+    uniform float uLevel;
+    uniform float uUnder;
+    uniform float uTime;
+    uniform vec3 uWater;
+    varying vec2 vUv;
+    void main() {
+      vec4 base = texture2D(tDiffuse, vUv);
+      if (uUnder <= 0.0) { gl_FragColor = base; return; }
+      vec2 uv = vUv + vec2(sin(vUv.y * 23.0 + uTime * 2.1), cos(vUv.x * 19.0 + uTime * 1.7)) * 0.0022 * uUnder;
+      vec3 c = texture2D(tDiffuse, uv).rgb;
+      float z = texture2D(tDepth, uv).x;
+      vec4 vp = uInvProj * vec4(uv * 2.0 - 1.0, z * 2.0 - 1.0, 1.0);
+      vec3 view = vp.xyz / vp.w;
+      float dist = min(length(view), 12.0);
+      // Глушит только путь внутри воды: луч вверх выходит из неё на глади.
+      vec3 dir = normalize((uCamWorld * vec4(view, 0.0)).xyz);
+      if (dir.y > 0.0) dist = min(dist, (uLevel - uCamY) / dir.y);
+      vec3 absorb = exp(-dist * vec3(0.95, 0.3, 0.22));
+      c = c * absorb + uWater * (1.0 - absorb);
+      float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+      c = mix(c, vec3(l), 0.08);
+      gl_FragColor = vec4(mix(base.rgb, c, uUnder), base.a);
+    }
+  `,
+};
+
 export const GradeShader = {
   uniforms: {
     tDiffuse: { value: null },

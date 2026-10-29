@@ -16,7 +16,7 @@ import { buildMeadow } from './meadow.js';
 import { Ball } from './ball.js';
 import { Player } from './player.js';
 import { SoundScape } from './audio.js';
-import { createDust, createFireflies, createSplash, GradeShader, VolumetricShader, updateVolumetric } from './effects.js';
+import { createDust, createFireflies, createSplash, GradeShader, UnderwaterShader, VolumetricShader, updateVolumetric } from './effects.js';
 import { useSeed, seeded } from './random.js';
 import { DURATION, FPS, dayT, cameraAt, EVENTS } from '../video/shot.js';
 
@@ -231,6 +231,9 @@ composer.addPass(gtao);
 const volumetric = new ShaderPass(VolumetricShader);
 volumetric.uniforms.tDepth.value = gtao.depthTexture;
 composer.addPass(volumetric);
+const underwater = new ShaderPass(UnderwaterShader);
+underwater.uniforms.tDepth.value = gtao.depthTexture;
+composer.addPass(underwater);
 // Порог выше белого кафеля: светятся только окно, солнечные пятна и блики, без молочной пелены.
 const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.4, 0.45, 1.6);
 composer.addPass(bloom);
@@ -410,7 +413,7 @@ function step(dt) {
     res.set(renderer.domElement.width, renderer.domElement.height);
     for (const w of waters) w.update(time, amb, day.s.lightDir, res);
     meadow.update(time, null);
-    splash.update(dt, (x, z, r) => waterAt(x, z)?.ripple(x, z, r * 50, 0.05));
+    splash.update(dt, (x, z, r) => waterAt(x, z)?.ripple(x, z, r * 50, 0.05), camera.position);
     ball.update(dt, player, fx);
     return;
   }
@@ -456,7 +459,7 @@ function step(dt) {
   for (const w of waters) w.update(time, amb, day.s.lightDir, res);
   meadow.update(time, player.pos);
   // Упавшая капля оставляет на воде маленький круг.
-  splash.update(dt, (x, z, r) => waterAt(x, z)?.ripple(x, z, r * 50, 0.05));
+  splash.update(dt, (x, z, r) => waterAt(x, z)?.ripple(x, z, r * 50, 0.05), camera.position);
   ball.update(dt, player, fx);
   sound.update(dt, day.s.day, day.s.night);
 
@@ -464,6 +467,29 @@ function step(dt) {
   phaseEl.textContent = day.phase;
   clockEl.textContent = day.clock;
 }
+
+// Камера под гладью бассейна: включаем толщу воды. Переход — за пару сантиметров высоты
+// (на всплытии это 1–2 кадра), и пока камера у самой глади, ближняя плоскость
+// придвинута, чтобы поверхность не резала кадр пополам.
+function updateUnderwater() {
+  const c = camera.position;
+  const inside = inPool(c.x, c.z);
+  const below = inside ? THREE.MathUtils.smoothstep(POOL.water - c.y, -0.004, 0.02) : 0;
+  const near = inside && Math.abs(c.y - POOL.water) < 0.12 ? 0.01 : 0.05;
+  if (camera.near !== near) {
+    camera.near = near;
+    camera.updateProjectionMatrix();
+  }
+  const u = underwater.uniforms;
+  u.uUnder.value = below;
+  u.uTime.value = time;
+  u.uInvProj.value.copy(camera.projectionMatrixInverse);
+  u.uCamWorld.value.copy(camera.matrixWorld);
+  u.uCamY.value = c.y;
+  u.uLevel.value = POOL.water;
+  u.uWater.value.copy(day.s.amb).multiplyScalar(day.s.ai * 0.6 + 0.35).multiply(UNDERWATER_TINT);
+}
+const UNDERWATER_TINT = new THREE.Color(0.12, 0.42, 0.45);
 
 function draw() {
   if (cubeFrame-- <= 0) {
@@ -473,6 +499,7 @@ function draw() {
   grade.uniforms.uTime.value = time;
   camera.updateMatrixWorld();
   updateVolumetric(volumetric, camera, day.s.lightDir, day.s.light, day.s.lightInt, time);
+  updateUnderwater();
 
   renderRefraction();
   composer.render();
@@ -506,7 +533,7 @@ function videoStep(k) {
     if (ev.kind !== 'breach' || ev.t < t0 || ev.t >= t1) continue;
     const [x, , z] = ev.at;
     water.ripple(x, z, 3, 0.35);
-    splash.burst(x, POOL.water, z, 180, 2.4);
+    splash.burst(x, POOL.water, z, 110, 2.4);
   }
   day.t = dayT(t1);
   placeCamera(t1);
