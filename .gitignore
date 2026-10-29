@@ -8,3 +8,6 @@ __pycache__/
 # Кадры видео до склейки
 renders/frames/
 assets/tmp.png
+# Рабочие файлы планов superpowers
+.superpowers/
+video/node_modules/
