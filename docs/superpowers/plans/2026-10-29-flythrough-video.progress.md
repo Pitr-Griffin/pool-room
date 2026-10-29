@@ -20,3 +20,6 @@ Task 4: Ruling: underwater fog uses analytic water path (ray exits at the surfac
 Task 4: Ruling: opening camera tilted toward the steps (KEYS[0] target) — looking straight up everything sits inside Snell's window and doesn't read as underwater — cost if wrong: opening framing differs from spec text
 Task 4: Ruling: splash drops within 0.5 m of the lens are hidden; breach burst 110 drops — near drops filled the frame as giant blurry bubbles — cost if wrong: breach looks a bit drier
 Task 4: complete (frames 0/60/102/104/108/130 checked: no split surface, deterministic hash on repeat, interactive ok)
+Task 5: Ruling: preview sheet built from a concat list (frame numbers step by 10, ffmpeg %04d needs a contiguous sequence) — cost if wrong: none
+Task 5: Ruling: user delegated approvals ("approve everything yourself") — preview reviewed by me: only fix was the 40–44 s light-column shot (camera stood inside the shaft, frame blew out white) — targets moved to look past the shaft at the window corner — cost if wrong: final hold shows the window rather than the skylight
+Task 5: complete (preview 150 frames in 36 s, ~170 ms/frame; tests: cd video && npm test → 13 pass)
