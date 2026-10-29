@@ -31,10 +31,10 @@ export const SHALLOW_BODY = {
   level: SHALLOW.water,
   simW: 400,
   simH: 140,
-  // Мелкая вода успокаивается чуть быстрее глубокой, но круги от шагов должны быть видны.
-  damping: 0.9925,
-  scale: 0.06,
-  slopeGain: 3,
+  // Мелкая вода успокаивается быстрее глубокой; волны низкие, наклон слегка усилен, чтобы круги читались.
+  damping: 0.99,
+  scale: 0.04,
+  slopeGain: 1.5,
   floorGLSL: `float floorAt(vec2 p) { return ${f(SHALLOW.floor)}; }`,
   maskGLSL: /* glsl */ `
   float waterMask(vec2 p) {
@@ -69,7 +69,10 @@ function waterShader(body) {
       void main() {
         vec4 wp = modelMatrix * vec4(position, 1.0);
         vSimUv = bodyUv(wp.xz);
-        float h = texture2D(tSim, vSimUv).r * uScale;
+        // У бортиков поверхность прижата: край воды не дрожит зубцами.
+        vec2 e = min(vSimUv, 1.0 - vSimUv) * vec2(BODY_W, BODY_L);
+        float edge = smoothstep(0.0, 0.08, min(e.x, e.y));
+        float h = texture2D(tSim, vSimUv).r * uScale * edge;
         vUvR = textureMatrix * vec4(position, 1.0);
         wp.y += h;
         vWP = wp.xyz;
@@ -94,9 +97,9 @@ function waterShader(body) {
       // Мелкая постоянная рябь поверх симуляции — вода никогда не стоит идеально.
       vec2 microSlope(vec2 p) {
         vec2 s = vec2(0.0);
-        s += vec2(cos(p.x * 9.0 + uTime * 1.7), cos(p.y * 7.0 - uTime * 1.3)) * 0.012;
-        s += vec2(cos((p.x + p.y) * 17.0 + uTime * 2.3), cos((p.x - p.y) * 15.0 - uTime * 2.1)) * 0.007;
-        s += vec2(cos(p.x * 31.0 - p.y * 11.0 + uTime * 3.1), cos(p.y * 29.0 + p.x * 7.0 + uTime * 2.7)) * 0.004;
+        s += vec2(cos(p.x * 9.0 + uTime * 1.1), cos(p.y * 7.0 - uTime * 0.9)) * 0.006;
+        s += vec2(cos((p.x + p.y) * 17.0 + uTime * 1.5), cos((p.x - p.y) * 15.0 - uTime * 1.4)) * 0.0035;
+        s += vec2(cos(p.x * 31.0 - p.y * 11.0 + uTime * 2.0), cos(p.y * 29.0 + p.x * 7.0 + uTime * 1.8)) * 0.0015;
         return s;
       }
 
@@ -115,8 +118,8 @@ function waterShader(body) {
         float path = depth / max(v.y, 0.12);
 
         vec2 suv = gl_FragCoord.xy / uRes;
-        // Сдвиг преломления растёт с глубиной, но и в воде по щиколотку волна заметно ломает дно.
-        vec2 off = n.xz * clamp(depth, 0.35, 0.9) * 0.1;
+        // Сдвиг преломления растёт с глубиной; в мелкой воде — небольшой, но не нулевой.
+        vec2 off = n.xz * clamp(depth, 0.15, 0.9) * 0.065;
         vec3 refr = texture2D(tRefract, suv - off).rgb;
         vec3 trans = exp(-path * vec3(0.42, 0.11, 0.09));
         vec3 scatter = vec3(0.18, 0.5, 0.55) * uAmb * 0.25 * (1.0 - trans);
@@ -176,7 +179,7 @@ export class Water {
   }
 
   ripple(x, z, amp = 1, radius = 0.12) {
-    this.sim.addDrop(x, z, radius, amp * 0.22);
+    this.sim.addDrop(x, z, radius, amp * 0.12);
   }
 
   update(time, ambient, lightDir, res) {

@@ -59,7 +59,7 @@ function addWetPrint(pos, vel, t) {
 }
 
 const day = new DayCycle(120);
-const sky = createSky();
+const sky = createSky(camera);
 scene.add(sky.mesh);
 // Окно коридора смотрит прямо в небо — внешние стены комнат за ним не видны.
 const corridorSky = sky.portal(CWINDOW.x1 - CWINDOW.x0, CWINDOW.y1 - CWINDOW.y0);
@@ -382,6 +382,7 @@ function frame() {
   const here = waterAt(px, pz) ?? waterAt(prevPos.x, prevPos.z);
   const deep = here === water;
   for (const ev of events) {
+    if (!here && (ev === 'enter' || ev === 'exit' || ev === 'water')) continue;
     if (ev === 'enter') {
       sound.splash(deep ? 0.8 : 0.45);
       here.ripple(px, pz, deep ? 3 : 1.6, 0.35);
@@ -404,7 +405,7 @@ function frame() {
   const under = waterAt(px, pz);
   if (under) {
     const sp = Math.hypot(player.vel.x, player.vel.z);
-    if (sp > 0.1) under.ripple(px, pz, sp * 0.09, 0.2);
+    if (sp > 0.1) under.ripple(px, pz, sp * 0.04, 0.24);
     idleRipple -= dt;
     if (idleRipple < 0) {
       under.ripple(px, pz, 0.25, 0.25);
