@@ -108,6 +108,26 @@ export function createSky() {
   const mesh = new THREE.Mesh(new THREE.SphereGeometry(80, 48, 24), material);
   mesh.renderOrder = -1;
 
+  // «Окно в небо»: плоскость, которая рисует небо по направлению взгляда и закрывает собой
+  // всё, что за ней. Ставится в стекло окна коридора — снаружи не видно стен соседних комнат,
+  // будто их нет, хотя войти в них можно.
+  const portalMaterial = new THREE.ShaderMaterial({
+    uniforms,
+    vertexShader: /* glsl */ `
+      varying vec3 vDir;
+      void main() {
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vDir = wp.xyz - cameraPosition;
+        gl_Position = projectionMatrix * viewMatrix * wp;
+      }
+    `,
+    fragmentShader,
+    side: THREE.DoubleSide,
+  });
+  function portal(width, height) {
+    return new THREE.Mesh(new THREE.PlaneGeometry(width, height), portalMaterial);
+  }
+
   const white = new THREE.Color(1, 1, 1);
   const night = new THREE.Color('#1b2344');
 
@@ -124,5 +144,5 @@ export function createSky() {
     uniforms.uCloud.value.copy(s.hor).lerp(white, 0.55).multiplyScalar(0.35 + s.ai * 0.75).lerp(night, s.stars * 0.85);
   }
 
-  return { mesh, update };
+  return { mesh, portal, update };
 }

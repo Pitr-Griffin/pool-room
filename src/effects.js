@@ -256,84 +256,90 @@ export function createFireflies(count = 34) {
   return { points, update };
 }
 
-// Брызги: капли разлетаются при входе в воду и при шагах по ней, падают обратно.
-export function createSplash(max = 600) {
+// Брызги: настоящие объёмные капли. Каждая — маленькая сфера с глянцевой поверхностью воды
+// (блики солнца, отражение комнаты), в полёте вытягивается вдоль скорости, как на фото
+// с короткой выдержкой. Крупных капель мало, мелких много; упав обратно, капля
+// оставляет на воде маленький круг (onLand).
+export function createSplash(max = 900) {
   const pos = new Float32Array(max * 3);
   const vel = new Float32Array(max * 3);
   const life = new Float32Array(max);
-  const size = new Float32Array(max);
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  geo.setAttribute('life', new THREE.BufferAttribute(life, 1));
-  geo.setAttribute('size', new THREE.BufferAttribute(size, 1));
-  const material = new THREE.ShaderMaterial({
-    uniforms: { uScale: { value: innerHeight } },
-    vertexShader: /* glsl */ `
-      attribute float life;
-      attribute float size;
-      uniform float uScale;
-      varying float vLife;
-      void main() {
-        vLife = life;
-        vec4 mv = modelViewMatrix * vec4(position, 1.0);
-        gl_PointSize = life > 0.0 ? size * uScale / -mv.z : 0.0;
-        gl_Position = projectionMatrix * mv;
-      }
-    `,
-    fragmentShader: /* glsl */ `
-      varying float vLife;
-      void main() {
-        if (vLife <= 0.0) discard;
-        vec2 c = gl_PointCoord - 0.5;
-        float d = length(c);
-        if (d > 0.5) discard;
-        // Капля: яркий блик сверху-слева и прозрачная середина.
-        float rim = smoothstep(0.5, 0.35, d) - smoothstep(0.32, 0.1, d) * 0.6;
-        float hl = smoothstep(0.18, 0.0, length(c - vec2(-0.15, 0.15)));
-        float a = clamp(rim * 0.55 + hl, 0.0, 1.0) * min(vLife * 3.0, 1.0);
-        gl_FragColor = vec4(vec3(0.85, 0.95, 1.0) + hl, a);
-      }
-    `,
+  const radius = new Float32Array(max);
+  const surface = new Float32Array(max);
+  const material = new THREE.MeshStandardMaterial({
+    // Вода почти прозрачна: видны в основном блики и отражение комнаты на поверхности капли.
+    color: new THREE.Color(0.5, 0.6, 0.62),
+    roughness: 0.02,
+    metalness: 0,
     transparent: true,
-    depthWrite: false,
+    opacity: 0.38,
+    envMapIntensity: 2.6,
   });
-  const points = new THREE.Points(geo, material);
-  points.frustumCulled = false;
+  const mesh = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 2), material, max);
+  mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  mesh.frustumCulled = false;
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const s = new THREE.Vector3();
+  const p = new THREE.Vector3();
+  const v = new THREE.Vector3();
+  const up = new THREE.Vector3(0, 1, 0);
+  const hidden = new THREE.Matrix4().makeScale(0, 0, 0);
+  for (let k = 0; k < max; k++) mesh.setMatrixAt(k, hidden);
   let next = 0;
-  let surface = 0;
 
+  // Всплеск в точке (x, y, z): y — уровень воды; power — сила (шаг ≈1, прыжок в воду ≈2.4).
   function burst(x, y, z, count, power = 1) {
-    surface = y;
     for (let i = 0; i < count; i++) {
       const k = next;
       next = (next + 1) % max;
       const a = Math.random() * Math.PI * 2;
-      const r = Math.random() * 0.18;
-      pos.set([x + Math.cos(a) * r, y + 0.02, z + Math.sin(a) * r], k * 3);
-      const out = (0.3 + Math.random() * 0.9) * power;
-      vel.set([Math.cos(a) * out * 0.6, (0.8 + Math.random() * 1.6) * power, Math.sin(a) * out * 0.6], k * 3);
-      life[k] = 0.6 + Math.random() * 0.8;
-      size[k] = 0.008 + Math.random() * 0.018;
+      const ring = 0.06 + Math.random() * 0.16;
+      pos.set([x + Math.cos(a) * ring, y + 0.01, z + Math.sin(a) * ring], k * 3);
+      // Корона: капли уходят наружу и вверх; чем мельче, тем быстрее.
+      const small = Math.random() ** 2.5;
+      const r = 0.0015 + (1 - small) * 0.0065 * Math.min(power, 1.6);
+      const out = (0.35 + Math.random() * 0.8) * power * (1.2 - r * 60);
+      vel.set([Math.cos(a) * out * 0.55, (0.9 + Math.random() * 1.5) * power * (1.15 - r * 40), Math.sin(a) * out * 0.55], k * 3);
+      life[k] = 0.5 + Math.random() * 0.9;
+      radius[k] = r;
+      surface[k] = y;
     }
   }
 
-  function update(dt) {
-    material.uniforms.uScale.value = innerHeight;
+  function update(dt, onLand) {
     for (let k = 0; k < max; k++) {
       if (life[k] <= 0) continue;
       vel[k * 3 + 1] -= 9.8 * dt;
+      // Лёгкое сопротивление воздуха.
+      const drag = Math.exp(-0.6 * dt);
+      vel[k * 3] *= drag;
+      vel[k * 3 + 2] *= drag;
       pos[k * 3] += vel[k * 3] * dt;
       pos[k * 3 + 1] += vel[k * 3 + 1] * dt;
       pos[k * 3 + 2] += vel[k * 3 + 2] * dt;
       life[k] -= dt;
-      if (pos[k * 3 + 1] < surface) life[k] = 0;
+      if (pos[k * 3 + 1] < surface[k] && vel[k * 3 + 1] < 0) {
+        if (onLand && radius[k] > 0.004) onLand(pos[k * 3], pos[k * 3 + 2], radius[k]);
+        life[k] = 0;
+      }
+      if (life[k] <= 0) {
+        mesh.setMatrixAt(k, hidden);
+        continue;
+      }
+      // Вытягиваем каплю вдоль скорости (размытие движения за ~1/90 с).
+      v.set(vel[k * 3], vel[k * 3 + 1], vel[k * 3 + 2]);
+      const speed = v.length();
+      q.setFromUnitVectors(up, speed > 1e-4 ? v.multiplyScalar(1 / speed) : up);
+      const r = radius[k] * Math.min(1, life[k] * 6);
+      s.set(r, r + speed * 0.007, r);
+      m.compose(p.set(pos[k * 3], pos[k * 3 + 1], pos[k * 3 + 2]), q, s);
+      mesh.setMatrixAt(k, m);
     }
-    geo.attributes.position.needsUpdate = true;
-    geo.attributes.life.needsUpdate = true;
-    geo.attributes.size.needsUpdate = true;
+    mesh.instanceMatrix.needsUpdate = true;
   }
 
-  return { points, burst, update };
+  return { mesh, points: mesh, burst, update };
 }
 
 // Финальная обработка: лёгкая хроматическая аберрация, виньетка и зерно — как у фото.

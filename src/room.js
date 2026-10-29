@@ -20,8 +20,7 @@ export const LIGHTMAP_KEYS = [
 // Рассеянный свет берётся из двух карт освещения, смешанных по времени суток.
 //
 // body — водоём этой комнаты: прямоугольник (для мокрой полосы, каустики и отблесков) и его карта каустики.
-// soil — вместо кафеля земля (пол луговой комнаты): без швов и глазури.
-export function makeTileMaterial(color, shared, lightmaps, body, soil = false) {
+export function makeTileMaterial(color, shared, lightmaps, body) {
   const m = new THREE.MeshStandardMaterial({ color, roughness: 0.15, metalness: 0 });
   m.lightMap = lightmaps.a.value;
   m.lightMapIntensity = 1.0;
@@ -30,7 +29,6 @@ export function makeTileMaterial(color, shared, lightmaps, body, soil = false) {
     BODY_C: `vec2(${f((body.x0 + body.x1) / 2)}, ${f((body.z0 + body.z1) / 2)})`,
     BODY_H: `vec2(${f((body.x1 - body.x0) / 2)}, ${f((body.z1 - body.z0) / 2)})`,
   };
-  if (soil) m.defines.SOIL = '';
   m.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, shared, { uLightMapB: lightmaps.b, uLmMix: lightmaps.mix, uCaustics: body.caustics });
     shader.vertexShader = shader.vertexShader
@@ -127,26 +125,14 @@ export function makeTileMaterial(color, shared, lightmaps, body, soil = false) {
         if (tVertical && tWP.y < -0.005 && tWP.y > -0.155) tileCol = vec3(0.2, 0.42, 0.56) * (0.95 + 0.08 * tVar);
         float tGrime = tNoise(tc * 1.3) * 0.6 + tNoise(tc * 7.0) * 0.4;
         vec3 groutCol = vec3(0.74, 0.76, 0.75) * (0.88 + 0.2 * tGrime);
-        #ifdef SOIL
-          // Земля под лугом: тёмная, комковатая, без швов и блеска.
-          tGrout = 0.0;
-          tWet = 0.0;
-          tSlope = vec2(0.0);
-          float sn = tNoise(tWP.xz * 9.0) * 0.6 + tNoise(tWP.xz * 37.0) * 0.4;
-          diffuseColor.rgb = mix(vec3(0.07, 0.05, 0.035), vec3(0.2, 0.15, 0.1), sn);
-        #else
-          diffuseColor.rgb *= mix(tileCol * (1.0 - tGrime * 0.03), groutCol, tGrout);
-          diffuseColor.rgb *= 1.0 - tWet * mix(0.06, 0.35, tGrout);
-        #endif`
+        diffuseColor.rgb *= mix(tileCol * (1.0 - tGrime * 0.03), groutCol, tGrout);
+        diffuseColor.rgb *= 1.0 - tWet * mix(0.06, 0.35, tGrout);`
       )
       .replace(
         '#include <roughnessmap_fragment>',
         `#include <roughnessmap_fragment>
         roughnessFactor = mix(0.08 + tGrime * 0.08, 0.85, tGrout);
-        roughnessFactor = mix(roughnessFactor, 0.03, tWet);
-        #ifdef SOIL
-          roughnessFactor = 1.0;
-        #endif`
+        roughnessFactor = mix(roughnessFactor, 0.03, tWet);`
       )
       .replace(
         '#include <normal_fragment_maps>',
@@ -184,7 +170,7 @@ export function makeTileMaterial(color, shared, lightmaps, body, soil = false) {
         #include <opaque_fragment>`
       );
   };
-  m.customProgramCacheKey = () => `pool-tile-baked-${m.defines.BODY_C}-${soil}`;
+  m.customProgramCacheKey = () => `pool-tile-baked-${m.defines.BODY_C}`;
   return m;
 }
 
@@ -260,9 +246,10 @@ export async function buildRoom(scene, shared, bodies, onProgress = () => {}) {
     r.mats = {
       Tile: makeTileMaterial(new THREE.Color('#ffffff'), shared, r.lightmaps, r.body),
       PoolTile: makeTileMaterial(new THREE.Color('#d3f1f2'), shared, r.lightmaps, r.body),
-      Soil: makeTileMaterial(new THREE.Color('#ffffff'), shared, r.lightmaps, r.body, true),
     };
   }
+  // Земля под лугом второй комнаты — такая же, как под полосой цветов в первой.
+  const soil = new THREE.MeshStandardMaterial({ color: '#4b3c2b', roughness: 1 });
 
   const group = new THREE.Group();
   gltf.scene.traverse((o) => {
@@ -270,7 +257,7 @@ export async function buildRoom(scene, shared, bodies, onProgress = () => {}) {
     // Объект второй комнаты (с коридором) целиком лежит восточнее первой.
     o.geometry.computeBoundingBox();
     const r = o.geometry.boundingBox.max.x > ROOM.x1 + ROOM.wall + 0.5 ? rooms[1] : rooms[0];
-    o.material = r.mats[o.material.name] ?? r.mats.Tile;
+    o.material = o.material.name === 'Soil' ? soil : r.mats[o.material.name] ?? r.mats.Tile;
     o.castShadow = true;
     o.receiveShadow = true;
   });
@@ -305,5 +292,5 @@ export async function buildRoom(scene, shared, bodies, onProgress = () => {}) {
     }
   }
 
-  return { room1: rooms[0].mats, room2: rooms[1].mats, all, frame, setTime };
+  return { room1: rooms[0].mats, room2: rooms[1].mats, soil, all, frame, setTime };
 }

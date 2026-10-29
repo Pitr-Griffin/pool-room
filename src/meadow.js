@@ -157,16 +157,20 @@ const FLOWERS = {
 
 // Луг второй комнаты: весь пол, кроме мелкого бассейна; к воде трава редеет.
 function scatter2(count, rand, accept) {
+  // Отступ от стен: там скруглённая галтель, трава в неё не врастает.
+  const wm = 0.16;
   const pts = [];
   let guard = 0;
   while (pts.length < count && guard++ < count * 40) {
-    const x = ROOM2.x0 + 0.04 + rand() * (ROOM2.x1 - ROOM2.x0 - 0.08);
-    const z = ROOM2.z0 + 0.04 + rand() * (ROOM2.z1 - ROOM2.z0 - 0.08);
+    const x = ROOM2.x0 + wm + rand() * (ROOM2.x1 - ROOM2.x0 - 2 * wm);
+    const z = ROOM2.z0 + wm + rand() * (ROOM2.z1 - ROOM2.z0 - 2 * wm);
     const ox = Math.max(SHALLOW.x0 - x, x - SHALLOW.x1, 0);
     const oz = Math.max(SHALLOW.z0 - z, z - SHALLOW.z1, 0);
     const gap = Math.hypot(ox, oz);
-    if (gap < 0.1) continue;
-    if (rand() > Math.min(1, (gap - 0.1) / 0.35 + 0.25) * accept) continue;
+    if (gap < 0.13) continue;
+    // У кафельного бортика и у стен трава реже.
+    const wall = Math.min(x - ROOM2.x0, ROOM2.x1 - x, z - ROOM2.z0, ROOM2.z1 - z) - wm;
+    if (rand() > Math.min(1, (gap - 0.13) / 0.35 + 0.25) * Math.min(1, wall / 0.25 + 0.4) * accept) continue;
     pts.push([x, z]);
   }
   return pts;
@@ -235,6 +239,21 @@ export function buildMeadow(scene) {
     shard.rotation.set((rand() - 0.5) * 0.25, rand() * Math.PI, (rand() - 0.5) * 0.25);
     shard.castShadow = shard.receiveShadow = true;
     group.add(shard);
+  }
+
+  // Во второй комнате пол когда-то был плиточным: в траве лежат целые плитки и обломки, кое-где кучками.
+  for (const [cx, cz] of scatter2(28, rand, 1)) {
+    const n = 1 + Math.floor(rand() * 4);
+    for (let i = 0; i < n; i++) {
+      const whole = rand() < 0.3;
+      const w = whole ? 0.147 : 0.04 + rand() * 0.1;
+      const d = whole ? 0.147 : 0.03 + rand() * 0.1;
+      const shard = new THREE.Mesh(new THREE.BoxGeometry(w, 0.011, d), shardMat);
+      shard.position.set(cx + (rand() - 0.5) * 0.35, 0.006 + rand() * 0.004, cz + (rand() - 0.5) * 0.35);
+      shard.rotation.set((rand() - 0.5) * 0.35, rand() * Math.PI, (rand() - 0.5) * 0.35);
+      shard.castShadow = shard.receiveShadow = true;
+      group.add(shard);
+    }
   }
 
   const m = new THREE.Matrix4();

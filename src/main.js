@@ -61,6 +61,10 @@ function addWetPrint(pos, vel, t) {
 const day = new DayCycle(120);
 const sky = createSky();
 scene.add(sky.mesh);
+// Окно коридора смотрит прямо в небо — внешние стены комнат за ним не видны.
+const corridorSky = sky.portal(CWINDOW.x1 - CWINDOW.x0, CWINDOW.y1 - CWINDOW.y0);
+corridorSky.position.set((CWINDOW.x0 + CWINDOW.x1) / 2, (CWINDOW.y0 + CWINDOW.y1) / 2, CORRIDOR.z0 - ROOM.wall / 2 - 0.045);
+scene.add(corridorSky);
 const enterBtn = document.getElementById('enter');
 enterBtn.disabled = true;
 // Водоёмы: глубокий бассейн первой комнаты и вода по щиколотку в коридоре и второй комнате.
@@ -116,8 +120,8 @@ const sound = new SoundScape();
 // а солнечное пятно на полу подсвечивает потолок — дешёвое подобие GI.
 // У каждой комнаты своя карта — снимается из её центра.
 const envProbes = [
-  { at: [0.2, 1.4, 0], mats: [mats.room1.Tile, mats.room1.PoolTile, mats.room1.Soil, mats.frame, ball.mesh.material] },
-  { at: [ROOM2.x0 + 4.2, 1.4, 0], mats: [mats.room2.Tile, mats.room2.PoolTile, mats.room2.Soil] },
+  { at: [0.2, 1.4, 0], mats: [mats.room1.Tile, mats.room1.PoolTile, mats.frame, ball.mesh.material] },
+  { at: [ROOM2.x0 + 4.2, 1.4, 0], mats: [mats.room2.Tile, mats.room2.PoolTile] },
 ].map(({ at, mats: list }) => {
   const target = new THREE.WebGLCubeRenderTarget(256, { type: THREE.HalfFloatType, generateMipmaps: false });
   const cam = new THREE.CubeCamera(0.05, 100, target);
@@ -130,6 +134,7 @@ const envProbes = [
   return { cam, target };
 });
 const cubeTarget = envProbes[0].target;
+splash.mesh.material.envMap = cubeTarget.texture;
 let cubeFrame = 0;
 let probeNext = 0;
 function captureEnvironment() {
@@ -354,7 +359,7 @@ const fx = {
   splash: (s) => sound.splash(s),
   ripple: (x, z, a) => {
     water.ripple(x, z, a, 0.2);
-    if (a > 1) splash.burst(x, POOL.water, z, Math.round(a * 14), 1.6);
+    if (a > 1) splash.burst(x, POOL.water, z, Math.round(a * 40), 1.6);
   },
 };
 const res = new THREE.Vector2();
@@ -380,15 +385,15 @@ function frame() {
     if (ev === 'enter') {
       sound.splash(deep ? 0.8 : 0.45);
       here.ripple(px, pz, deep ? 3 : 1.6, 0.35);
-      splash.burst(px, here.body.level, pz, deep ? 70 : 30, deep ? 2.4 : 1.5);
+      splash.burst(px, here.body.level, pz, deep ? 180 : 80, deep ? 2.4 : 1.5);
     } else if (ev === 'exit') {
       wetFeet = 12;
       here.ripple(px, pz, 0.8, 0.25);
-      splash.burst(px, here.body.level, pz, 15, 1.2);
+      splash.burst(px, here.body.level, pz, 30, 1.1);
     } else if (ev === 'water') {
       sound.step('water');
       here.ripple(px, pz, deep ? 1.1 : 0.9, 0.22);
-      splash.burst(px, here.body.level, pz, deep ? 10 : 8, deep ? 1.4 : 1.1);
+      splash.burst(px, here.body.level, pz, deep ? 30 : 24, deep ? 1.3 : 1.05);
     } else if (ev === 'tile' || ev === 'grass') {
       sound.step(ev);
       if (ev === 'tile' && wetFeet > 0) addWetPrint(player.pos, player.vel, time);
@@ -409,7 +414,8 @@ function frame() {
   res.set(renderer.domElement.width, renderer.domElement.height);
   for (const w of waters) w.update(time, amb, day.s.lightDir, res);
   meadow.update(time, player.pos);
-  splash.update(dt);
+  // Упавшая капля оставляет на воде маленький круг.
+  splash.update(dt, (x, z, r) => waterAt(x, z)?.ripple(x, z, r * 50, 0.05));
   ball.update(dt, player, fx);
   sound.update(dt, day.s.day, day.s.night);
 

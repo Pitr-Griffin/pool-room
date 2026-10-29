@@ -531,7 +531,10 @@ def build_shell(bm, uv, dx, door_side):
     cr = 0.14
     for z, dz in ((cr, -1), (H - cr, 1)):
         add_cove(bm, uv, (x0, y1 - cr, z), (0, 1, 0), (0, 0, dz), (1, 0, 0), x1 - x0, cr)
-        add_cove(bm, uv, (x0, y0 + cr, z), (0, -1, 0), (0, 0, dz), (1, 0, 0), x1 - x0, cr)
+        # У южной стены луговой комнаты нижняя галтель начинается за мелким бассейном —
+        # над водой она висела бы в воздухе.
+        sa = SHALLOW["x1"] if door_side == "x0" and dz < 0 else x0
+        add_cove(bm, uv, (sa, y0 + cr, z), (0, -1, 0), (0, 0, dz), (1, 0, 0), x1 - sa, cr)
         for side, xc, sx in (("x0", x0 + cr, -1), ("x1", x1 - cr, 1)):
             spans = [(y0, y1)]
             if side == door_side and dz < 0:
@@ -542,7 +545,9 @@ def build_shell(bm, uv, dx, door_side):
                     add_cove(bm, uv, (xc, a, z), (sx, 0, 0), (0, 0, dz), (0, 1, 0), b - a, cr)
     for x, sx in ((x0 + cr, -1), (x1 - cr, 1)):
         for y, sy in ((y0 + cr, -1), (y1 - cr, 1)):
-            add_cove(bm, uv, (x, y, 0), (sx, 0, 0), (0, sy, 0), (0, 0, 1), H, cr)
+            # Угол, куда заходит мелкий бассейн, скруглён до самого его дна.
+            z0 = SHALLOW["floor"] if door_side == "x0" and sx < 0 and sy < 0 else 0
+            add_cove(bm, uv, (x, y, z0), (sx, 0, 0), (0, sy, 0), (0, 0, 1), H - z0, cr)
 
 
 def build_room(tile, pool_tile):
@@ -609,17 +614,17 @@ def build_room2(tile, pool_tile, soil):
     # Пол второй комнаты — земля (материал 2); под стенами — тоже, его не видно.
     # Под южной стеной — кафель: бассейн доходит до стены, и торец этой плиты виден под водой.
     add_box(bm, uv, x0, x1 + T, y0 - T, S["y0"], B, 0, 0)
-    add_box(bm, uv, x0, x1 + T, S["y1"], y1 + T, B, 0, 2)
-    add_box(bm, uv, S["x1"], x1 + T, S["y0"], S["y1"], B, 0, 2)
+    # Бассейн окантован кафельным бортиком (K), дальше — земля под лугом.
+    K = 0.1
+    add_box(bm, uv, x0, S["x1"] + K, S["y1"], S["y1"] + K, B, 0, 0)
+    add_box(bm, uv, S["x1"], S["x1"] + K, S["y0"], S["y1"], B, 0, 0)
+    add_box(bm, uv, x0, x1 + T, S["y1"] + K, y1 + T, B, 0, 2)
+    add_box(bm, uv, S["x1"] + K, x1 + T, S["y0"], S["y1"] + K, B, 0, 2)
     # Основание западной стены — по обе стороны от проёма.
     add_box(bm, uv, x0 - T, x0, y0 - T, C["y0"], B, 0, 0)
     add_box(bm, uv, x0 - T, x0, C["y1"], y1 + T, B, 0, 0)
-    # Мелкий бассейн: кафельное дно и облицовка бортов.
-    L = 0.01
+    # Мелкий бассейн: кафельное дно; борта — торцы бортика и оснований стен.
     add_box(bm, uv, S["x0"], S["x1"], S["y0"], S["y1"], B, S["floor"], 1)
-    add_box(bm, uv, S["x1"] - L, S["x1"], S["y0"], S["y1"], S["floor"], 0, 1)
-    add_box(bm, uv, S["x0"], S["x1"], S["y0"], S["y0"] + L, S["floor"], 0, 1)
-    add_box(bm, uv, S["x0"], S["x1"], S["y1"] - L, S["y1"], S["floor"], 0, 1)
     r = 0.025
     for a, b in [
         ((S["x0"], S["y1"], -r), (S["x1"], S["y1"], -r)),
@@ -717,18 +722,22 @@ def build_ball(mat):
 def meadow2_points(count, rng, accept=1.0):
     """Луг на весь пол второй комнаты, кроме мелкого бассейна; к воде трава редеет."""
     R, S, dx = ROOM, SHALLOW, ROOM2_DX
+    # Отступ от стен: там скруглённая галтель, трава в неё не врастает.
+    wm = 0.16
     pts = []
     guard = 0
     while len(pts) < count and guard < count * 40:
         guard += 1
-        x = R["x0"] + dx + 0.04 + rng.random() * (R["x1"] - R["x0"] - 0.08)
-        y = R["y0"] + 0.04 + rng.random() * (R["y1"] - R["y0"] - 0.08)
+        x = R["x0"] + dx + wm + rng.random() * (R["x1"] - R["x0"] - 2 * wm)
+        y = R["y0"] + wm + rng.random() * (R["y1"] - R["y0"] - 2 * wm)
         ox = max(S["x0"] - x, x - S["x1"], 0)
         oy = max(S["y0"] - y, y - S["y1"], 0)
         gap = math.hypot(ox, oy)
-        if gap < 0.1:
+        if gap < 0.13:
             continue
-        if rng.random() > min(1, (gap - 0.1) / 0.35 + 0.25) * accept:
+        # У бортика и у стен трава реже.
+        wall = min(x - R["x0"] - dx, R["x1"] + dx - x, y - R["y0"], R["y1"] - y) - wm
+        if rng.random() > min(1, (gap - 0.13) / 0.35 + 0.25) * min(1, wall / 0.25 + 0.4) * accept:
             continue
         pts.append((x, y))
     return pts
@@ -911,6 +920,33 @@ def build_soil(mat, shard_mat, rng):
             project_uv(f, uv)
     shards = new_object("TileShards", bm, [shard_mat])
     return soil, shards
+
+
+def build_shards2(shard_mat, rng):
+    """Куски кафеля, разбросанные в траве луговой комнаты: пол когда-то был плиточным.
+    Где-то целые плитки, где-то обломки, часть лежит кучками."""
+    bm = bmesh.new()
+    uv = bm.loops.layers.uv.new("UVMap")
+    centers = meadow2_points(28, rng)
+    for cx, cy in centers:
+        for _ in range(1 + int(rng.random() * 4)):
+            x = cx + (rng.random() - 0.5) * 0.35
+            y = cy + (rng.random() - 0.5) * 0.35
+            whole = rng.random() < 0.3
+            w = TILE * 0.98 if whole else 0.04 + rng.random() * 0.1
+            d = TILE * 0.98 if whole else 0.03 + rng.random() * 0.1
+            m = (
+                Matrix.Translation((x, y, 0.004 + rng.random() * 0.004))
+                @ Matrix.Rotation(rng.random() * math.pi, 4, "Z")
+                @ Matrix.Rotation((rng.random() - 0.5) * 0.35, 4, "X")
+                @ Matrix.Rotation((rng.random() - 0.5) * 0.35, 4, "Y")
+                @ Matrix.Diagonal((w, d, 0.011, 1))
+            )
+            verts = bmesh.ops.create_cube(bm, size=1.0, matrix=m)["verts"]
+            for f in {f for v in verts for f in v.link_faces}:
+                f.normal_update()
+                project_uv(f, uv)
+    return new_object("TileShards2", bm, [shard_mat])
 
 
 # --- Свет, небо, камера ---------------------------------------------------
@@ -1122,7 +1158,9 @@ def build(time_name="day"):
     ]
     build_flowers(flower_mats, rng)
     build_flowers(flower_mats, rng, region=2, scale=5, name="Flowers2")
-    build_soil(soil, simple_material("Shard", (0.92, 0.93, 0.93), 0.08), rng)
+    shard_mat = simple_material("Shard", (0.92, 0.93, 0.93), 0.08)
+    build_soil(soil, shard_mat, rng)
+    build_shards2(shard_mat, rng)
 
     cfg = setup_lighting(time_name)
 

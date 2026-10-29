@@ -31,9 +31,10 @@ export const SHALLOW_BODY = {
   level: SHALLOW.water,
   simW: 400,
   simH: 140,
-  // Мелкая вода быстрее успокаивается.
-  damping: 0.99,
-  scale: 0.035,
+  // Мелкая вода успокаивается чуть быстрее глубокой, но круги от шагов должны быть видны.
+  damping: 0.9925,
+  scale: 0.06,
+  slopeGain: 3,
   floorGLSL: `float floorAt(vec2 p) { return ${f(SHALLOW.floor)}; }`,
   maskGLSL: /* glsl */ `
   float waterMask(vec2 p) {
@@ -102,7 +103,8 @@ function waterShader(body) {
       void main() {
         if (waterMask(vWP.xz) < 0.5) discard;
         vec4 info = texture2D(tSim, vSimUv);
-        vec2 slope = info.ba + microSlope(vWP.xz);
+        // В мелкой воде волны ниже, поэтому их наклон усилен — иначе круги от шагов не видны.
+        vec2 slope = info.ba * ${f(body.slopeGain ?? 1)} + microSlope(vWP.xz);
         vec3 n = normalize(vec3(slope.x, 1.0, slope.y));
         vec3 v = normalize(cameraPosition - vWP);
         float fres = 0.02 + 0.98 * pow(1.0 - max(dot(n, v), 0.0), 5.0);
@@ -113,7 +115,8 @@ function waterShader(body) {
         float path = depth / max(v.y, 0.12);
 
         vec2 suv = gl_FragCoord.xy / uRes;
-        vec2 off = n.xz * clamp(depth, 0.05, 0.9) * 0.09;
+        // Сдвиг преломления растёт с глубиной, но и в воде по щиколотку волна заметно ломает дно.
+        vec2 off = n.xz * clamp(depth, 0.35, 0.9) * 0.1;
         vec3 refr = texture2D(tRefract, suv - off).rgb;
         vec3 trans = exp(-path * vec3(0.42, 0.11, 0.09));
         vec3 scatter = vec3(0.18, 0.5, 0.55) * uAmb * 0.25 * (1.0 - trans);
