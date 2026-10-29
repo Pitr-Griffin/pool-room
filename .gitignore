@@ -1,1 +1,8 @@
 .claude/
+# Сцена Blender собирается скриптом blender/pool_room.py
+*.blend
+*.blend1
+__pycache__/
+# Кадры видео до склейки
+renders/frames/
+assets/tmp.png

@@ -65,7 +65,7 @@ export const VolumetricShader = {
       }
       acc *= dt;
       float phase = 0.6 + 2.4 * pow(max(dot(rd, uLightDir), 0.0), 6.0);
-      gl_FragColor = vec4(base.rgb + uLightCol * acc * phase * 0.005, base.a);
+      gl_FragColor = vec4(base.rgb + uLightCol * acc * phase * 0.0035, base.a);
     }
   `,
 };
@@ -141,6 +141,86 @@ export function createDust(count = 700) {
     uniforms.uScale.value = innerHeight;
   }
   return { points, update };
+}
+
+// Брызги: капли разлетаются при входе в воду и при шагах по ней, падают обратно.
+export function createSplash(max = 600) {
+  const pos = new Float32Array(max * 3);
+  const vel = new Float32Array(max * 3);
+  const life = new Float32Array(max);
+  const size = new Float32Array(max);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('life', new THREE.BufferAttribute(life, 1));
+  geo.setAttribute('size', new THREE.BufferAttribute(size, 1));
+  const material = new THREE.ShaderMaterial({
+    uniforms: { uScale: { value: innerHeight } },
+    vertexShader: /* glsl */ `
+      attribute float life;
+      attribute float size;
+      uniform float uScale;
+      varying float vLife;
+      void main() {
+        vLife = life;
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        gl_PointSize = life > 0.0 ? size * uScale / -mv.z : 0.0;
+        gl_Position = projectionMatrix * mv;
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      varying float vLife;
+      void main() {
+        if (vLife <= 0.0) discard;
+        vec2 c = gl_PointCoord - 0.5;
+        float d = length(c);
+        if (d > 0.5) discard;
+        // Капля: яркий блик сверху-слева и прозрачная середина.
+        float rim = smoothstep(0.5, 0.35, d) - smoothstep(0.32, 0.1, d) * 0.6;
+        float hl = smoothstep(0.18, 0.0, length(c - vec2(-0.15, 0.15)));
+        float a = clamp(rim * 0.55 + hl, 0.0, 1.0) * min(vLife * 3.0, 1.0);
+        gl_FragColor = vec4(vec3(0.85, 0.95, 1.0) + hl, a);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+  });
+  const points = new THREE.Points(geo, material);
+  points.frustumCulled = false;
+  let next = 0;
+  let surface = 0;
+
+  function burst(x, y, z, count, power = 1) {
+    surface = y;
+    for (let i = 0; i < count; i++) {
+      const k = next;
+      next = (next + 1) % max;
+      const a = Math.random() * Math.PI * 2;
+      const r = Math.random() * 0.18;
+      pos.set([x + Math.cos(a) * r, y + 0.02, z + Math.sin(a) * r], k * 3);
+      const out = (0.3 + Math.random() * 0.9) * power;
+      vel.set([Math.cos(a) * out * 0.6, (0.8 + Math.random() * 1.6) * power, Math.sin(a) * out * 0.6], k * 3);
+      life[k] = 0.6 + Math.random() * 0.8;
+      size[k] = 0.008 + Math.random() * 0.018;
+    }
+  }
+
+  function update(dt) {
+    material.uniforms.uScale.value = innerHeight;
+    for (let k = 0; k < max; k++) {
+      if (life[k] <= 0) continue;
+      vel[k * 3 + 1] -= 9.8 * dt;
+      pos[k * 3] += vel[k * 3] * dt;
+      pos[k * 3 + 1] += vel[k * 3 + 1] * dt;
+      pos[k * 3 + 2] += vel[k * 3 + 2] * dt;
+      life[k] -= dt;
+      if (pos[k * 3 + 1] < surface) life[k] = 0;
+    }
+    geo.attributes.position.needsUpdate = true;
+    geo.attributes.life.needsUpdate = true;
+    geo.attributes.size.needsUpdate = true;
+  }
+
+  return { points, burst, update };
 }
 
 // Финальная обработка: лёгкая хроматическая аберрация, виньетка и зерно — как у фото.

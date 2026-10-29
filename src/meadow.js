@@ -2,29 +2,62 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { MEADOW, meadowEdge } from './layout.js';
 
+const PRESS = 24;
+
 // Колыхание травы: чем выше точка над полом, тем сильнее её сносит.
-function addSway(material, time) {
+// Следы: там, где прошёл игрок, трава приминается к земле и за несколько секунд
+// медленно распрямляется; прямо под ногами — расходится в стороны.
+function addSway(material, uniforms) {
   material.onBeforeCompile = (shader) => {
-    shader.uniforms.uSwayTime = time;
+    Object.assign(shader.uniforms, uniforms);
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nuniform float uSwayTime;')
+      .replace(
+        '#include <common>',
+        `#include <common>
+        uniform float uSwayTime;
+        uniform vec4 uPress[${PRESS}];`
+      )
       .replace(
         '#include <project_vertex>',
         `vec4 mvPosition = vec4(transformed, 1.0);
         #ifdef USE_INSTANCING
           mvPosition = instanceMatrix * mvPosition;
+          vec3 root = (modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+        #else
+          vec3 root = (modelMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
         #endif
         vec4 swp = modelMatrix * mvPosition;
         float sh = max(swp.y, 0.0);
-        float w = sin(uSwayTime * 1.6 + swp.x * 2.3 + swp.z * 1.1) * 0.6
-                + sin(uSwayTime * 2.7 + swp.x * 4.1 - swp.z * 2.0) * 0.3;
+        float w = sin(uSwayTime * 1.6 + root.x * 2.3 + root.z * 1.1) * 0.6
+                + sin(uSwayTime * 2.7 + root.x * 4.1 - root.z * 2.0) * 0.3;
         swp.x += w * sh * sh * 0.7;
         swp.z += w * sh * sh * 0.3;
+
+        float press = 0.0;
+        vec2 away = vec2(0.0);
+        for (int i = 0; i < ${PRESS}; i++) {
+          vec4 f = uPress[i];
+          if (f.w <= 0.0) continue;
+          vec2 d = root.xz - f.xy;
+          float dist = length(d);
+          float age = max(uSwayTime - f.z, 0.0);
+          float k = (1.0 - smoothstep(0.12, 0.38, dist)) * exp(-age / 3.5) * f.w;
+          if (k > press) { press = k; away = d / max(dist, 0.001); }
+        }
+        // Пригибаем травинку: верх опускается и уходит от следа, длина сохраняется.
+        float bend = press * 1.3;
+        vec2 dirA = away;
+        float hRel = swp.y - root.y;
+        vec2 horiz = swp.xz - root.xz;
+        float c = cos(bend), s = sin(bend);
+        swp.y = root.y + hRel * c;
+        swp.xz = root.xz + horiz + dirA * hRel * s;
+
         mvPosition = viewMatrix * swp;
         gl_Position = projectionMatrix * mvPosition;`
       );
   };
-  material.customProgramCacheKey = () => 'meadow-sway';
+  material.customProgramCacheKey = () => 'meadow-sway-press';
 }
 
 function colorize(geo, color) {
@@ -136,6 +169,10 @@ function mulberry32(a) {
 export function buildMeadow(scene) {
   const rand = mulberry32(7);
   const time = { value: 0 };
+  const prints = Array.from({ length: PRESS }, () => new THREE.Vector4(0, 0, -100, 0));
+  const swayUniforms = { uSwayTime: time, uPress: { value: prints } };
+  let nextPrint = 0;
+  const lastPrint = new THREE.Vector2(1e9, 1e9);
   const group = new THREE.Group();
 
   // Земля под травой — там, где кафель разошёлся.
@@ -175,7 +212,7 @@ export function buildMeadow(scene) {
   const tint = new THREE.Color();
 
   const grassMat = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.85 });
-  addSway(grassMat, time);
+  addSway(grassMat, swayUniforms);
   const blades = scatter(8500, rand, 0.9);
   const grass = new THREE.InstancedMesh(bladeGeometry(), grassMat, blades.length);
   blades.forEach(([x, z], i) => {
@@ -192,7 +229,7 @@ export function buildMeadow(scene) {
   group.add(grass);
 
   const flowerMat = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.7 });
-  addSway(flowerMat, time);
+  addSway(flowerMat, swayUniforms);
   const counts = { daisy: 140, buttercup: 110, forgetMeNot: 100, clover: 100, bluebell: 55 };
   for (const [kind, count] of Object.entries(counts)) {
     const pts = scatter(count, rand, 0.9);
@@ -210,8 +247,22 @@ export function buildMeadow(scene) {
 
   scene.add(group);
   return {
-    update(t) {
+    // playerPos — где стоит игрок; на траве оставляем следы через каждые ~12 см.
+    update(t, playerPos) {
       time.value = t;
+      if (!playerPos) return;
+      const onGrass =
+        playerPos.x > MEADOW.x0 - 0.3 && playerPos.x < MEADOW.x1 + 0.3 && playerPos.z < meadowEdge(playerPos.x) + 0.3;
+      if (!onGrass) return;
+      // Текущий след обновляется непрерывно, чтобы трава прижималась прямо под ногами.
+      const cur = prints[(nextPrint + PRESS - 1) % PRESS];
+      if (lastPrint.distanceTo(new THREE.Vector2(playerPos.x, playerPos.z)) > 0.12) {
+        prints[nextPrint].set(playerPos.x, playerPos.z, t, 1);
+        nextPrint = (nextPrint + 1) % PRESS;
+        lastPrint.set(playerPos.x, playerPos.z);
+      } else {
+        cur.z = t;
+      }
     },
   };
 }
