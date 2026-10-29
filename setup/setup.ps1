@@ -19,7 +19,8 @@ function Refresh-Path {
 function Winget($id, $version) {
   $extra = if ($version) { @('--version', $version) } else { @() }
   # winget.exe, а не winget: имена в PowerShell без учёта регистра, иначе функция вызывает саму себя.
-  winget.exe install --id $id -e --silent --accept-package-agreements --accept-source-agreements --disable-interactivity @extra |
+  # --source winget: если источник msstore сломан, без него winget ничего не ставит.
+  winget.exe install --id $id -e --source winget --silent --accept-package-agreements --accept-source-agreements --disable-interactivity @extra |
     Select-Object -Last 1
 }
 
