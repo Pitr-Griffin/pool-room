@@ -25,6 +25,7 @@
 - Геометрия общая для обеих версий: размеры в `src/layout.js` и константы в `blender/pool_room.py` (окно, бассейн, луг, световые колодцы `SKYLIGHTS`, глубина шахт `WELL = 0.45`, коридор `CORRIDOR`/`CWINDOW`, вторая комната `ROOM2_DX = 11`, мелкий бассейн `SHALLOW`) должны совпадать. Оси: в Blender Z вверх и окно на y=+3, в вебе Y вверх и окно на z=−3 (y Blender = −z веба).
 - Две комнаты: первая (кафель, глубокий бассейн) запечена в `assets/lightmap_<время>.exr`, коридор со второй (луговой) — в `assets/lightmap_2_<время>.exr`. Вода — два водоёма (`POOL_BODY`, `SHALLOW_BODY` в `src/water.js`) с общим кадром преломления.
 - Настроение сцены — тихая тревога «отсюда не выбраться», без хоррора; музыку не трогать.
+- **Ролик «Пролёт»** (`video/`): сценарий камеры и времени — `video/shot.js` (тесты `cd video && npm test`). Пересобрать: сервер превью на 8123 → `node video/render.mjs --preview` (лист превью) → `node video/render.mjs` (1500 кадров, ~6 мин на RTX, → `renders/flythrough_scene.mp4`) → `node video/render.mjs --audio` (→ `renders/flythrough.wav`) → скопировать оба в `video/composition/assets/` как `scene.mp4` и `sound.wav` → в `video/composition`: `hyperframes check`, `hyperframes render -q delivery -o ../../renders/pool_room_flythrough.mp4`. Готовый ролик (~280 МБ) в git не кладётся.
 - **MCP for Blender** (сервер `blender` в Claude Code) — для правок вживую в открытом Blender: N → вкладка «MCP for Blender» → Start MCP Server.
 
 ## В начале каждой сессии (делать самому, не просить пользователя)

@@ -26,3 +26,7 @@ Task 5: complete (preview 150 frames in 36 s, ~170 ms/frame; tests: cd video && 
 Task 6: Ruling: sound cues live in video/cues.js (pure, tested) instead of inline in audio.html — cost if wrong: none
 Task 6: Ruling: no CC0 samples — all synthesized; impact = low noise thump + 130→55 Hz body + 1.8 kHz tile ring; crack = 8 HF clicks in 120 ms + faint rattle; breach splash amount 1.4 (0.9 was only 2x the ambient)
 Task 6: complete (measured: splash peak 3.514 s, impact onset 45.697 s, silence after 49.55 s; 18 tests pass; interactive ok)
+Task 7: Ruling: plugin launcher pins hyperframes 0.8.215 which npm doesn't have — used the global 0.8.214 CLI (installed earlier at the user's request) — cost if wrong: patch-level behaviour differences
+Task 7: Ruling: overlays (title, crack, fade) stay in index.html instead of sub-compositions — check warns nested_structure_needs_subcomposition (editability only) — cost if wrong: less convenient editing in the desktop app
+Task 7: Ruling: final MP4 is 279 MB > 50 MB — not committed (plan: ask; user delegated decisions) — ignored in .gitignore
+Task 7: complete (check ok; snapshots 6/23/42/46/49 s reviewed; ffprobe 1920x1080 30 fps 50.0 s + AAC; audio in final: splash 3.514 s, impact 45.70 s, silent after 49.6 s)

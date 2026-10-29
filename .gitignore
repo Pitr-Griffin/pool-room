@@ -11,3 +11,10 @@ assets/tmp.png
 # Рабочие файлы планов superpowers
 .superpowers/
 video/node_modules/
+# Медиа монтажа пролёта — копии renders/flythrough_scene.mp4 и flythrough.wav
+video/composition/assets/
+renders/flythrough_scene.mp4
+renders/pool_room_flythrough.mp4
+video/composition/.hyperframes/
+video/composition/.thumbnails/
+video/composition/.waveform-cache/
