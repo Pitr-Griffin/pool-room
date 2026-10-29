@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>Pool Room — звук ролика</title>
+  <!-- Офлайн-рендер звука «Пролёта»: открывает video/render.mjs --audio. -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+<script type="module">
+  import { SoundScape } from '../src/audio.js';
+  import { DayCycle } from '../src/daycycle.js';
+  import { DURATION, dayT } from './shot.js';
+  import { soundCues, mulberry32 } from './cues.js';
+
+  // 16-битный стерео WAV из AudioBuffer.
+  function wav(buffer) {
+    const ch = [buffer.getChannelData(0), buffer.getChannelData(1)];
+    const n = ch[0].length;
+    const out = new DataView(new ArrayBuffer(44 + n * 4));
+    const str = (o, s) => [...s].forEach((c, i) => out.setUint8(o + i, c.charCodeAt(0)));
+    str(0, 'RIFF');
+    out.setUint32(4, 36 + n * 4, true);
+    str(8, 'WAVEfmt ');
+    out.setUint32(16, 16, true);
+    out.setUint16(20, 1, true);
+    out.setUint16(22, 2, true);
+    out.setUint32(24, buffer.sampleRate, true);
+    out.setUint32(28, buffer.sampleRate * 4, true);
+    out.setUint16(32, 4, true);
+    out.setUint16(34, 16, true);
+    str(36, 'data');
+    out.setUint32(40, n * 4, true);
+    for (let i = 0, o = 44; i < n; i++) {
+      for (const c of ch) {
+        out.setInt16(o, Math.max(-1, Math.min(1, c[i])) * 0x7fff, true);
+        o += 2;
+      }
+    }
+    return out.buffer;
+  }
+
+  window.renderAudio = async () => {
+    // Случайности (шум, детюн, птицы) — повторяемые: один и тот же звук при каждом рендере.
+    Math.random = mulberry32(7);
+    const rate = 48000;
+    const ctx = new OfflineAudioContext(2, Math.ceil(rate * DURATION), rate);
+    const sound = new SoundScape({ ctx });
+    sound.time = 0;
+    sound.start();
+
+    // Птицы и сверчки — по времени суток таймлапса, шагами в кадр.
+    const day = new DayCycle(120);
+    const dt = 1 / 30;
+    const cues = soundCues();
+    let next = 0;
+    for (let t = 0; t < DURATION; t += dt) {
+      day.t = dayT(t);
+      day.compute();
+      sound.time = t;
+      // После удара — только глушение, без новых птиц.
+      if (t < cues[cues.length - 1].t) sound.update(dt, day.s.day, day.s.night);
+      while (next < cues.length && cues[next].t < t + dt) {
+        const c = cues[next++];
+        sound.time = c.t;
+        if (c.kind === 'splash') sound.splash(c.amount);
+        else if (c.kind === 'lap') sound.splash(c.amount);
+        else if (c.kind === 'impact') sound.impact();
+        else if (c.kind === 'crack') sound.crack();
+        else if (c.kind === 'muffle') sound.muffle(c.end);
+      }
+    }
+    const buffer = await ctx.startRendering();
+    const bytes = new Uint8Array(wav(buffer));
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return btoa(bin);
+  };
+  window.audioReady = true;
+</script>
+</body>
+</html>

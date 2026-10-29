@@ -23,3 +23,6 @@ Task 4: complete (frames 0/60/102/104/108/130 checked: no split surface, determi
 Task 5: Ruling: preview sheet built from a concat list (frame numbers step by 10, ffmpeg %04d needs a contiguous sequence) — cost if wrong: none
 Task 5: Ruling: user delegated approvals ("approve everything yourself") — preview reviewed by me: only fix was the 40–44 s light-column shot (camera stood inside the shaft, frame blew out white) — targets moved to look past the shaft at the window corner — cost if wrong: final hold shows the window rather than the skylight
 Task 5: complete (preview 150 frames in 36 s, ~170 ms/frame; tests: cd video && npm test → 13 pass)
+Task 6: Ruling: sound cues live in video/cues.js (pure, tested) instead of inline in audio.html — cost if wrong: none
+Task 6: Ruling: no CC0 samples — all synthesized; impact = low noise thump + 130→55 Hz body + 1.8 kHz tile ring; crack = 8 HF clicks in 120 ms + faint rattle; breach splash amount 1.4 (0.9 was only 2x the ambient)
+Task 6: complete (measured: splash peak 3.514 s, impact onset 45.697 s, silence after 49.55 s; 18 tests pass; interactive ok)

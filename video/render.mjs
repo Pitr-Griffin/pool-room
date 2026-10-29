@@ -3,6 +3,7 @@
 //   node video/render.mjs              — все кадры → renders/frames/flythrough/, затем renders/flythrough_scene.mp4
 //   node video/render.mjs --preview    — каждый 10-й кадр 960×540 → renders/flythrough_preview.jpg (лист 10×15)
 //   node video/render.mjs --from N --to M
+//   node video/render.mjs --audio      — звук → renders/flythrough.wav
 //
 // Нужен сервер превью (setup/serve.ps1) на http://localhost:8123. Готовые кадры пропускаются —
 // прерванный рендер продолжается с места остановки.
@@ -17,7 +18,25 @@ import { parseArgs, framesToRender, frameName } from './frames.js';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const TOTAL = Math.round(DURATION * FPS);
 const opts = parseArgs(process.argv.slice(2), TOTAL);
-const dir = join(ROOT, 'renders', 'frames', opts.preview ? 'flythrough_preview' : 'flythrough');
+
+if (opts.audio) {
+  // Звук ролика: video/audio.html рендерит его в OfflineAudioContext и отдаёт WAV.
+  const browser = await chromium.launch();
+  const page = await browser.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto('http://localhost:8123/video/audio.html');
+  await page.waitForFunction(() => window.audioReady, null, { timeout: 60000 });
+  const b64 = await page.evaluate(() => window.renderAudio());
+  await browser.close();
+  if (errors.length) throw new Error(errors.join('; '));
+  const out = join(ROOT, 'renders', 'flythrough.wav');
+  writeFileSync(out, Buffer.from(b64, 'base64'));
+  console.log('audio:', out);
+  process.exit(0);
+}
+
+const dir =join(ROOT, 'renders', 'frames', opts.preview ? 'flythrough_preview' : 'flythrough');
 mkdirSync(dir, { recursive: true });
 
 const done = new Set(
