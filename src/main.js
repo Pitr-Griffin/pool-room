@@ -26,7 +26,7 @@ renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.AgXToneMapping;
-renderer.toneMappingExposure = 1.0;
+renderer.toneMappingExposure = 0.9;
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.05, 200);
@@ -148,8 +148,10 @@ gtao.updateGtaoMaterial({ radius: 0.6, distanceExponent: 1.5, thickness: 1.5, sc
 gtao.blendIntensity = 0.85;
 composer.addPass(gtao);
 const volumetric = new ShaderPass(VolumetricShader);
+volumetric.uniforms.tDepth.value = gtao.depthTexture;
 composer.addPass(volumetric);
-const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.28, 0.75, 0.92);
+// Порог выше белого кафеля: светятся только окно, солнечные пятна и блики, без молочной пелены.
+const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.4, 0.45, 1.6);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
 const grade = new ShaderPass(GradeShader);
@@ -184,7 +186,7 @@ function applyLighting(time) {
   mats.setTime(day.t);
 
   windowLight.color.copy(s.hor).lerp(white, 0.35);
-  windowLight.intensity = s.ai * 2.4;
+  windowLight.intensity = s.ai * 1.6;
 
   const ld = s.lightDir;
   let lit = 0;

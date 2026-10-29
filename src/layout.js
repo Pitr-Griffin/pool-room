@@ -12,7 +12,7 @@ export const SKYLIGHTS = [
   { x0: -2.9, x1: -1.9, z0: -0.6, z1: 0.4 },
   { x0: 0.6, x1: 1.8, z0: -1.7, z1: -0.7 },
 ];
-export const WELL = 1.1;
+export const WELL = 0.45;
 
 // Ступени из кафеля вдоль западного края бассейна: спускаются от пола к дну.
 export const STEPS = { count: 4, tread: 0.32 };

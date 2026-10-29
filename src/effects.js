@@ -12,6 +12,7 @@ export const VolumetricShader = {
     uLightDir: { value: new THREE.Vector3() },
     uLightCol: { value: new THREE.Color() },
     uTime: { value: 0 },
+    tDepth: { value: null },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -22,6 +23,7 @@ export const VolumetricShader = {
   `,
   fragmentShader: /* glsl */ `
     uniform sampler2D tDiffuse;
+    uniform sampler2D tDepth;
     uniform mat4 uInvProj;
     uniform mat4 uCamWorld;
     uniform vec3 uCamPos;
@@ -32,6 +34,19 @@ export const VolumetricShader = {
     ${LAYOUT_GLSL}
 
     float vHash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+
+    // Плотность взвеси: медленно плывущие клубы, чтобы луч не был ровной заливкой.
+    float h3(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
+    float noise3(vec3 p) {
+      vec3 i = floor(p), f = fract(p);
+      f = f * f * (3.0 - 2.0 * f);
+      return mix(mix(mix(h3(i), h3(i + vec3(1, 0, 0)), f.x), mix(h3(i + vec3(0, 1, 0)), h3(i + vec3(1, 1, 0)), f.x), f.y),
+                 mix(mix(h3(i + vec3(0, 0, 1)), h3(i + vec3(1, 0, 1)), f.x), mix(h3(i + vec3(0, 1, 1)), h3(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+    }
+    float haze(vec3 p) {
+      vec3 w = vec3(uTime * 0.03, uTime * 0.012, -uTime * 0.02);
+      return 0.45 + 0.75 * noise3(p * 1.3 + w) + 0.35 * noise3(p * 3.1 - w * 1.7);
+    }
 
     void main() {
       vec4 base = texture2D(tDiffuse, vUv);
@@ -51,21 +66,26 @@ export const VolumetricShader = {
       vec3 tmx = max(t1, t2);
       float tExit = min(min(tmx.x, tmx.y), tmx.z);
 
-      const int STEPS = 40;
-      float dt = tExit / float(STEPS);
+      // Луч останавливается на первой поверхности: столб света не просвечивает сквозь стены, мяч и воду.
+      float z = texture2D(tDepth, vUv).x;
+      vec4 sp = uInvProj * vec4(vUv * 2.0 - 1.0, z * 2.0 - 1.0, 1.0);
+      float tEnd = min(tExit, length(sp.xyz / sp.w));
+
+      const int STEPS = 72;
+      float dt = tEnd / float(STEPS);
       float jitter = vHash(gl_FragCoord.xy + fract(uTime) * 17.0);
       float acc = 0.0;
       for (int i = 0; i < STEPS; i++) {
         vec3 p = ro + rd * (float(i) + jitter) * dt;
         float lit = inBeamFramed(p, uLightDir);
         if (lit > 0.0) {
-          float n = 0.7 + 0.3 * sin(p.x * 2.1 + uTime * 0.15) * sin(p.y * 2.7 - uTime * 0.11 + p.z * 1.3);
-          acc += lit * n;
+          // Колодцы узкие, поэтому их столбы плотнее — иначе они теряются на фоне окна.
+          acc += (lit + inSkylight(p, uLightDir) * 40.0) * haze(p);
         }
       }
       acc *= dt;
       float phase = 0.6 + 2.4 * pow(max(dot(rd, uLightDir), 0.0), 6.0);
-      gl_FragColor = vec4(base.rgb + uLightCol * acc * phase * 0.0035, base.a);
+      gl_FragColor = vec4(base.rgb + uLightCol * acc * phase * 0.0026, base.a);
     }
   `,
 };
@@ -80,14 +100,15 @@ export function updateVolumetric(pass, camera, lightDir, lightCol, intensity, ti
   u.uTime.value = time;
 }
 
-// Пылинки, которые видны только в солнечном луче.
-export function createDust(count = 700) {
+// Пылинки, которые видны только в солнечном луче: медленно дрейфуют, кружатся и вспыхивают,
+// когда поворачиваются к свету гранью.
+export function createDust(count = 6000) {
   const pos = new Float32Array(count * 3);
   const seed = new Float32Array(count);
   for (let i = 0; i < count; i++) {
     pos[i * 3] = ROOM.x0 + 0.2 + Math.random() * (ROOM.x1 - ROOM.x0 - 0.4);
-    pos[i * 3 + 1] = 0.1 + Math.random() * (ROOM.height - 0.2);
-    pos[i * 3 + 2] = ROOM.z0 + 0.1 + Math.random() * (ROOM.z1 - ROOM.z0) * 0.75;
+    pos[i * 3 + 1] = 0.05 + Math.random() * (ROOM.height + 0.9);
+    pos[i * 3 + 2] = ROOM.z0 + 0.1 + Math.random() * (ROOM.z1 - ROOM.z0 - 0.2);
     seed[i] = Math.random() * 100;
   }
   const geo = new THREE.BufferGeometry();
@@ -110,11 +131,15 @@ export function createDust(count = 700) {
       ${LAYOUT_GLSL}
       void main() {
         vec3 p = position;
-        float t = uTime * 0.05;
-        p += vec3(sin(t + seed) * 0.35, sin(t * 0.7 + seed * 1.3) * 0.25, cos(t * 0.8 + seed * 0.7) * 0.35);
-        vLit = inBeamFramed(p, uLightDir) * (0.5 + 0.5 * sin(uTime * 0.8 + seed * 7.0));
+        float t = uTime * 0.06;
+        // Медленный дрейф по кругу плюс мелкое дрожание, и общий слабый подъём тёплого воздуха.
+        p += vec3(sin(t + seed) * 0.45, sin(t * 0.7 + seed * 1.3) * 0.3, cos(t * 0.8 + seed * 0.7) * 0.45);
+        p += 0.02 * vec3(sin(uTime * 1.3 + seed * 5.1), sin(uTime * 1.1 + seed * 3.7), sin(uTime * 0.9 + seed * 4.3));
+        p.y = mod(p.y + uTime * 0.008, ${(ROOM.height + 0.9).toFixed(2)}) + 0.05;
+        float glint = pow(0.5 + 0.5 * sin(uTime * (0.6 + fract(seed * 3.1) * 1.4) + seed * 7.0), 6.0);
+        vLit = p.y < ${ROOM.height.toFixed(2)} ? inBeamFramed(p, uLightDir) * (0.25 + 1.6 * glint) : 0.0;
         vec4 mv = modelViewMatrix * vec4(p, 1.0);
-        gl_PointSize = (0.006 + fract(seed) * 0.006) * uScale / -mv.z;
+        gl_PointSize = vLit > 0.0 ? max((0.006 + fract(seed) * 0.009) * uScale / -mv.z, 2.0) : 0.0;
         gl_Position = projectionMatrix * mv;
       }
     `,
@@ -124,6 +149,7 @@ export function createDust(count = 700) {
       void main() {
         float d = length(gl_PointCoord - 0.5);
         float a = smoothstep(0.5, 0.0, d);
+        a *= a;
         gl_FragColor = vec4(uCol * a * vLit, 1.0);
       }
     `,
@@ -137,8 +163,8 @@ export function createDust(count = 700) {
   function update(lightDir, lightCol, intensity, time) {
     uniforms.uTime.value = time;
     uniforms.uLightDir.value.copy(lightDir);
-    uniforms.uCol.value.copy(lightCol).multiplyScalar(intensity * 0.35);
-    uniforms.uScale.value = innerHeight;
+    uniforms.uCol.value.copy(lightCol).multiplyScalar(intensity * 0.9);
+    uniforms.uScale.value = innerHeight * devicePixelRatio;
   }
   return { points, update };
 }

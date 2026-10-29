@@ -28,7 +28,7 @@ WINDOW = dict(x0=-3.2, x1=3.0, z0=0.7, z1=2.8, panes=6)
 MEADOW = dict(x0=-3.45, x1=3.25, y_wall=3.0, y_edge=1.9)
 # Световые колодцы в потолке (x0, x1, y0, y1) и их высота.
 SKYLIGHTS = [(-2.9, -1.9, -0.4, 0.6), (0.6, 1.8, 0.7, 1.7)]
-WELL = 1.1
+WELL = 0.45
 MICRO_DISPLACEMENT = True  # bake_web.py отключает: для запекания рельеф не нужен
 TILE = 0.15
 
