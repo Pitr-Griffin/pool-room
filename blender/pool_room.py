@@ -925,6 +925,8 @@ def build(time_name="day"):
 
     # Луг и деревья за окном.
     haze = tuple(c * 0.5 * cfg["sky"] + 0.35 * cfg["sky"] for c in (0.75, 0.85, 1.0))
+    if cfg.get("moon"):
+        haze = tuple(c * 0.12 for c in haze)
     bm = bmesh.new()
     grid(bm, 1, 1, lambda u, v: (-400 + u * 800, 3.3 + v * 600, -0.4))
     new_object("Field", bm, [field_material(haze)])

@@ -32,6 +32,8 @@ scene.frame_start = 1
 scene.frame_end = len(files)
 
 r = scene.render
+if hasattr(r.image_settings, "media_type"):
+    r.image_settings.media_type = "VIDEO"  # Blender 5+
 r.image_settings.file_format = "FFMPEG"
 r.ffmpeg.format = "MPEG4"
 r.ffmpeg.codec = "H264"
