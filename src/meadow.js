@@ -305,6 +305,8 @@ export function buildMeadow(scene) {
 
   scene.add(group);
   return {
+    // Трава и цветы без карты освещения: отражённый свет комнаты им даёт кубическая карта (main.js).
+    materials: [grassMat, flowerMat],
     // playerPos — где стоит игрок; на траве оставляем следы через каждые ~12 см.
     update(t, playerPos) {
       time.value = t;

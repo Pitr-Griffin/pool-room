@@ -131,7 +131,8 @@ const sound = new SoundScape();
 // а солнечное пятно на полу подсвечивает потолок — дешёвое подобие GI.
 // У каждой комнаты своя карта — снимается из её центра.
 const envProbes = [
-  { at: [0.2, 1.4, 0], mats: [mats.room1.Tile, mats.room1.PoolTile, mats.frame, ball.mesh.material] },
+  // Трава — тоже: без отражённого света на рассвете и в тени она становится чёрным силуэтом.
+  { at: [0.2, 1.4, 0], mats: [mats.room1.Tile, mats.room1.PoolTile, mats.frame, ball.mesh.material, ...meadow.materials] },
   { at: [ROOM2.x0 + 4.2, 1.4, 0], mats: [mats.room2.Tile, mats.room2.PoolTile] },
 ].map(({ at, mats: list }) => {
   const target = new THREE.WebGLCubeRenderTarget(256, { type: THREE.HalfFloatType, generateMipmaps: false });
