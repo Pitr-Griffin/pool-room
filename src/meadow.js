@@ -203,6 +203,44 @@ function mulberry32(a) {
   };
 }
 
+// Трава и цветы — куски по CHUNK метров: каждый кусок отсекается по камере отдельно,
+// и в отражениях, преломлении и проходах глубины рисуется только то, что в кадре.
+const CHUNK = 2;
+// Запас сферы под колыхание и пригибание травы, чтобы край куска не пропадал раньше времени.
+const SWAY_MARGIN = 0.3;
+
+function addChunked(group, geometry, material, items) {
+  const cells = new Map();
+  for (const it of items) {
+    const key = `${Math.floor(it.x / CHUNK)},${Math.floor(it.z / CHUNK)}`;
+    if (!cells.has(key)) cells.set(key, []);
+    cells.get(key).push(it);
+  }
+  for (const list of cells.values()) {
+    const mesh = new THREE.InstancedMesh(geometry, material, list.length);
+    list.forEach((it, i) => {
+      mesh.setMatrixAt(i, it.matrix);
+      if (it.color) mesh.setColorAt(i, it.color);
+    });
+    mesh.computeBoundingSphere();
+    mesh.boundingSphere.radius += SWAY_MARGIN;
+    mesh.receiveShadow = true;
+    group.add(mesh);
+  }
+}
+
+// Осколки одной комнаты — одним мешем: десятки мелких коробок не плодят отдельных вызовов отрисовки.
+function mergeShards(shards, material) {
+  const geos = shards.map((sh) => {
+    sh.updateMatrix();
+    return sh.geometry.applyMatrix4(sh.matrix);
+  });
+  const mesh = new THREE.Mesh(mergeGeometries(geos), material);
+  geos.forEach((g) => g.dispose());
+  mesh.castShadow = mesh.receiveShadow = true;
+  return mesh;
+}
+
 export function buildMeadow(scene) {
   const rand = mulberry32(7);
   const time = { value: 0 };
@@ -232,16 +270,18 @@ export function buildMeadow(scene) {
 
   // Отколотые плитки по краю.
   const shardMat = new THREE.MeshStandardMaterial({ color: '#eef1f1', roughness: 0.35 });
+  const shards1 = [];
   for (let i = 0; i < 16; i++) {
     const x = MEADOW.x0 + 0.2 + rand() * (MEADOW.x1 - MEADOW.x0 - 0.4);
     const shard = new THREE.Mesh(new THREE.BoxGeometry(0.06 + rand() * 0.08, 0.012, 0.05 + rand() * 0.08), shardMat);
     shard.position.set(x, 0.008, meadowEdge(x) + 0.02 + rand() * 0.05);
     shard.rotation.set((rand() - 0.5) * 0.25, rand() * Math.PI, (rand() - 0.5) * 0.25);
-    shard.castShadow = shard.receiveShadow = true;
-    group.add(shard);
+    shards1.push(shard);
   }
+  group.add(mergeShards(shards1, shardMat));
 
   // Во второй комнате пол когда-то был плиточным: в траве лежат целые плитки и обломки, кое-где кучками.
+  const shards2 = [];
   for (const [cx, cz] of scatter2(28, rand, 1)) {
     const n = 1 + Math.floor(rand() * 4);
     for (let i = 0; i < n; i++) {
@@ -251,12 +291,11 @@ export function buildMeadow(scene) {
       const shard = new THREE.Mesh(new THREE.BoxGeometry(w, 0.011, d), shardMat);
       shard.position.set(cx + (rand() - 0.5) * 0.35, 0.006 + rand() * 0.004, cz + (rand() - 0.5) * 0.35);
       shard.rotation.set((rand() - 0.5) * 0.35, rand() * Math.PI, (rand() - 0.5) * 0.35);
-      shard.castShadow = shard.receiveShadow = true;
-      group.add(shard);
+      shards2.push(shard);
     }
   }
+  group.add(mergeShards(shards2, shardMat));
 
-  const m = new THREE.Matrix4();
   const q = new THREE.Quaternion();
   const e = new THREE.Euler();
   const s = new THREE.Vector3();
@@ -272,34 +311,26 @@ export function buildMeadow(scene) {
 
   // Полоса у окна первой комнаты и луг на весь пол второй (в ~5 раз больше по площади).
   for (const [region, scale] of [[1, 1], [2, 5]]) {
-    const blades = scatter(8500 * scale, rand, 0.9, region);
-    const grass = new THREE.InstancedMesh(blade, grassMat, blades.length);
-    blades.forEach(([x, z], i) => {
+    const blades = scatter(8500 * scale, rand, 0.9, region).map(([x, z]) => {
       e.set((rand() - 0.5) * 0.35, rand() * Math.PI * 2, (rand() - 0.5) * 0.35);
       q.setFromEuler(e);
       const k = 0.45 + rand() * 0.8;
       s.set(1 + rand() * 0.6, k, 1);
-      m.compose(p.set(x, 0, z), q, s);
-      grass.setMatrixAt(i, m);
+      const matrix = new THREE.Matrix4().compose(p.set(x, 0, z), q, s);
       tint.setHSL(0.15 + rand() * 0.12, 0.3, 0.4 + rand() * 0.2);
-      grass.setColorAt(i, tint.multiplyScalar(2.0));
+      return { x, z, matrix, color: tint.clone().multiplyScalar(2.0) };
     });
-    grass.receiveShadow = true;
-    group.add(grass);
+    addChunked(group, blade, grassMat, blades);
 
     const counts = { daisy: 140, buttercup: 110, forgetMeNot: 100, clover: 100, bluebell: 55 };
     for (const [kind, count] of Object.entries(counts)) {
-      const pts = scatter(count * scale, rand, 0.9, region);
-      const mesh = new THREE.InstancedMesh(flowerGeo[kind], flowerMat, pts.length);
-      pts.forEach(([x, z], i) => {
+      const pts = scatter(count * scale, rand, 0.9, region).map(([x, z]) => {
         e.set((rand() - 0.5) * 0.3, rand() * Math.PI * 2, (rand() - 0.5) * 0.3);
         q.setFromEuler(e);
         const k = 1.1 + rand() * 0.5;
-        m.compose(p.set(x, 0, z), q, s.set(k, k, k));
-        mesh.setMatrixAt(i, m);
+        return { x, z, matrix: new THREE.Matrix4().compose(p.set(x, 0, z), q, s.set(k, k, k)) };
       });
-      mesh.receiveShadow = true;
-      group.add(mesh);
+      addChunked(group, flowerGeo[kind], flowerMat, pts);
     }
   }
 
