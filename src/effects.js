@@ -100,8 +100,9 @@ export function updateVolumetric(pass, camera, lightDir, lightCol, intensity, ti
   u.uTime.value = time;
 }
 
-// Пылинки, которые видны только в солнечном луче: медленно дрейфуют, кружатся и вспыхивают,
-// когда поворачиваются к свету гранью.
+const GREY = new THREE.Color(0.8, 0.78, 0.74);
+
+// Пылинки, которые видны только в солнечном луче: медленно дрейфуют и кружатся, матовые.
 export function createDust(count = 40000) {
   const pos = new Float32Array(count * 3);
   const seed = new Float32Array(count);
@@ -136,12 +137,12 @@ export function createDust(count = 40000) {
         p += vec3(sin(t + seed) * 0.45, sin(t * 0.7 + seed * 1.3) * 0.3, cos(t * 0.8 + seed * 0.7) * 0.45);
         p += 0.02 * vec3(sin(uTime * 1.3 + seed * 5.1), sin(uTime * 1.1 + seed * 3.7), sin(uTime * 0.9 + seed * 4.3));
         p.y = mod(p.y + uTime * 0.008, ${(ROOM.height + 0.9).toFixed(2)}) + 0.05;
-        float glint = pow(0.5 + 0.5 * sin(uTime * (0.6 + fract(seed * 3.1) * 1.4) + seed * 7.0), 6.0);
-        vLit = p.y < ${ROOM.height.toFixed(2)} ? inBeamFramed(p, uLightDir) * (0.25 + 1.6 * glint) : 0.0;
+        // Пыль матовая: рассеивает свет ровно, без вспышек — только разная яркость у разных пылинок.
+        vLit = p.y < ${ROOM.height.toFixed(2)} ? inBeamFramed(p, uLightDir) * (0.45 + 0.55 * fract(seed * 7.3)) : 0.0;
         vec4 mv = modelViewMatrix * vec4(p, 1.0);
         // Микрочастицы: доли миллиметра, на экране — пиксель-два, крупнее только у самой камеры.
-        float px = (0.0008 + fract(seed) * 0.0016) * uScale / -mv.z;
-        gl_PointSize = vLit > 0.0 ? clamp(px, 1.0, 3.0) : 0.0;
+        float px = (0.0012 + fract(seed) * 0.0018) * uScale / -mv.z;
+        gl_PointSize = vLit > 0.0 ? clamp(px, 1.5, 3.5) : 0.0;
         // Пылинка мельче пикселя не исчезает, а становится тусклее.
         vLit *= min(px, 1.0);
         gl_Position = projectionMatrix * mv;
@@ -152,7 +153,8 @@ export function createDust(count = 40000) {
       varying float vLit;
       void main() {
         float d = length(gl_PointCoord - 0.5);
-        float a = smoothstep(0.5, 0.15, d);
+        // Мягкое пятнышко без яркого центра — как пушинка в луче, а не искра.
+        float a = exp(-d * d * 14.0);
         gl_FragColor = vec4(uCol * a * vLit, 1.0);
       }
     `,
@@ -166,7 +168,8 @@ export function createDust(count = 40000) {
   function update(lightDir, lightCol, intensity, time) {
     uniforms.uTime.value = time;
     uniforms.uLightDir.value.copy(lightDir);
-    uniforms.uCol.value.copy(lightCol).multiplyScalar(intensity * 2.2);
+    // Чуть сероватый тон и умеренная яркость: пылинки не должны дотягивать до порога свечения (блума).
+    uniforms.uCol.value.copy(lightCol).lerp(GREY, 0.3).multiplyScalar(Math.min(intensity * 0.55, 1.1));
     uniforms.uScale.value = innerHeight * devicePixelRatio;
   }
   return { points, update };

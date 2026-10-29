@@ -1,4 +1,6 @@
-.claude/
+# Настройки Claude Code локальные, кроме конфигурации превью
+.claude/*
+!.claude/launch.json
 # Сцена Blender собирается скриптом blender/pool_room.py
 *.blend
 *.blend1

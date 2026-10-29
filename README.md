@@ -67,6 +67,10 @@ blender --background --factory-startup --python blender/pool_room.py -- --time d
 npx serve .
 ```
 
+## Новый компьютер
+
+Всё для продолжения работы на другом компьютере — Blender, плагины, скиллы, видеоинструменты и заметки Claude — ставит `setup/setup.ps1`. Подробности в [setup/README.md](setup/README.md). Контекст проекта для Claude — в [CLAUDE.md](CLAUDE.md), история работы — в [docs/HISTORY.md](docs/HISTORY.md).
+
 ## Устройство
 
 - `src/layout.js` — размеры комнаты, бассейна, окна и луговой полосы
@@ -76,9 +80,10 @@ npx serve .
 - `src/water.js` — поверхность воды: отражение, преломление, поглощение
 - `src/waterSim.js` — физика волн и каустика на видеокарте
 - `blender/bake_web.py` — запекает отражённый свет комнаты для веб-версии (`assets/lightmap_*.exr`)
-- `src/effects.js` — объёмный свет, пылинки, финальная цветокоррекция
+- `src/effects.js` — объёмный свет, пылинки, светлячки, брызги, финальная цветокоррекция
 - `src/meadow.js` — трава и цветы
 - `src/ball.js` — мяч и его физика
 - `src/player.js` — ходьба от первого лица
 - `src/audio.js` — звук
 - `GLOSSARY.md` — словарь понятий сцены
+- `setup/` — установка всего окружения на новый компьютер и локальный сервер для превью
