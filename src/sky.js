@@ -1,10 +1,13 @@
 import * as THREE from 'three';
 
+// vDir — из камеры в мировых координатах: далёкому небу всё равно, а близким облакам нужен
+// настоящий луч из глаза, иначе они не сдвигаются при движении камеры.
 const vertexShader = /* glsl */ `
 varying vec3 vDir;
 void main() {
-  vDir = position;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  vec4 wp = modelMatrix * vec4(position, 1.0);
+  vDir = wp.xyz - cameraPosition;
+  gl_Position = projectionMatrix * viewMatrix * wp;
 }
 `;
 
@@ -126,6 +129,76 @@ vec4 clouds(vec3 d) {
   }
   return vec4(scat, T);
 }
+// --- Близкие облака --------------------------------------------------------------
+// Несколько больших клубов в метрах прямо за окнами (3–20 м от фасада, есть и ниже окна).
+// xyz — центр, w — радиус; положения двигает JS (плывут вдоль здания). Внутри клуба —
+// плотность из шума в мировых координатах, свет солнца ослабляется сквозь сам клуб.
+const int NEAR_N = 6;
+uniform vec4 uNear[NEAR_N];
+uniform float uNearSteps;
+
+float nearDensity(vec3 p, vec4 c, float seed, int oct) {
+  vec3 q = (p - c.xyz) / c.w;
+  // Кучевое облако из трёх слитых клубов: большой посередине и два помельче по бокам.
+  vec3 o1 = vec3(0.6, 0.12, 0.15 * sin(seed * 3.1));
+  vec3 o2 = vec3(-0.55, 0.02, -0.2 * cos(seed * 2.3));
+  float r = min(length(q * vec3(1.0, 1.3, 1.0)), min(length((q - o1) * 1.45), length((q - o2) * 1.6)));
+  // Крупные неровности формы и мелкие «кочаны» по краю.
+  vec3 w = vec3(seed * 17.0, seed * 5.0, uTime * 0.025);
+  float n = fbm3(p * 0.5 + w, oct);
+  float billow = 1.0 - abs(2.0 * vnoise(p * 1.7 + w * 1.3) - 1.0);
+  float d = 1.0 - r + (n - 0.5) * 0.75 + (billow - 0.5) * 0.22;
+  // Плоское днище.
+  d *= smoothstep(-0.55, -0.3, q.y);
+  return smoothstep(0.0, 0.1, d);
+}
+
+vec4 nearClouds(vec3 ro, vec3 rd) {
+  vec3 L = uSunDir.y > 0.0 ? uSunDir : uMoonDir;
+  float cosT = dot(rd, L);
+  float phase = mix(hg(cosT, 0.6), hg(cosT, -0.2), 0.35);
+  vec3 lightCol = uSunColor * uLightI;
+  vec3 scat = vec3(0.0);
+  float T = 1.0;
+  int steps = int(uNearSteps);
+  float jitter = fract(sin(dot(gl_FragCoord.xy, vec2(41.31, 289.13))) * 43758.5453);
+  for (int i = 0; i < NEAR_N; i++) {
+    vec4 c = uNear[i];
+    // Пересечение луча с ограничивающей сферой клуба.
+    vec3 oc = ro - c.xyz;
+    float R = c.w * 1.2;
+    float b = dot(oc, rd);
+    float h = b * b - (dot(oc, oc) - R * R);
+    if (h <= 0.0) continue;
+    h = sqrt(h);
+    float t0 = max(-b - h, 0.0);
+    float t1 = -b + h;
+    if (t1 <= 0.0) continue;
+    float dt = (t1 - t0) / float(steps);
+    float t = t0 + dt * jitter;
+    float seed = float(i) * 1.37;
+    for (int k = 0; k < 64; k++) {
+      if (k >= steps || T < 0.02) break;
+      vec3 p = ro + rd * t;
+      float dens = nearDensity(p, c, seed, int(uOct));
+      if (dens > 0.003) {
+        float od = 0.0;
+        float ls = c.w * 0.14;
+        for (int j = 1; j <= 4; j++) od += nearDensity(p + L * ls * float(j), c, seed, 3);
+        float Tl = exp(-od * ls * 2.2);
+        float powder = 1.0 - exp(-dens * 4.0);
+        float hn = clamp((p.y - c.y) / c.w * 0.5 + 0.5, 0.0, 1.0);
+        vec3 S = lightCol * Tl * phase * powder * 6.5 + uCloud * (0.2 + 0.45 * hn);
+        float a = exp(-dens * dt * 2.4);
+        scat += T * (1.0 - a) * S;
+        T *= a;
+      }
+      t += dt;
+    }
+  }
+  return vec4(scat, T);
+}
+
 void main() {
   vec3 d = normalize(vDir);
   // Земли нет: комната висит в небе, и ниже горизонта — то же небо с облаками.
@@ -150,10 +223,26 @@ void main() {
 
   vec4 cl = clouds(d);
   col = col * cl.a + cl.rgb;
+  // Близкие облака — поверх далёких.
+  vec4 nc = nearClouds(cameraPosition, d);
+  col = col * nc.a + nc.rgb;
 
   gl_FragColor = vec4(col * uGain, 1.0);
 }
 `;
+
+// Близкие облака (метры, мировые координаты). Окна смотрят на −z, фасад — z = −3.25;
+// третье проходит почти вплотную к стеклу, два — ниже окна. Скорость — м/с вдоль x.
+const NEAR = [
+  { x: -9, y: 1.4, z: -11, r: 3.6, speed: 0.45 },
+  { x: 7, y: -3.6, z: -15, r: 5, speed: 0.32 },
+  { x: 3, y: 2.3, z: -8.2, r: 2.6, speed: 0.55 },
+  { x: 18, y: 4.8, z: -22, r: 6, speed: 0.24 },
+  { x: -16, y: -6, z: -13, r: 4.5, speed: 0.38 },
+  { x: 27, y: 0.4, z: -12, r: 3.8, speed: 0.42 },
+]
+const NEAR_X0 = -28;
+const NEAR_SPAN = 72;
 
 // mainCamera — облака в полном качестве только для основного кадра; в отражениях,
 // кубических картах и т. п. — упрощённые (меньше шагов).
@@ -177,6 +266,8 @@ export function createSky(mainCamera, { video = false } = {}) {
     uStars: { value: 0 },
     uTime: { value: 0 },
     uGain: { value: 1 },
+    uNear: { value: NEAR.map(() => new THREE.Vector4()) },
+    uNearSteps: { value: 28 },
   };
   const material = new THREE.ShaderMaterial({
     uniforms,
@@ -192,6 +283,7 @@ export function createSky(mainCamera, { video = false } = {}) {
     uniforms.uSteps.value = main ? (video ? 80 : 40) : video ? 40 : 14;
     uniforms.uOct.value = main || video ? 5 : 3;
     uniforms.uLightSteps.value = main && video ? 6 : 4;
+    uniforms.uNearSteps.value = main ? (video ? 48 : 28) : 10;
   };
   mesh.onBeforeRender = pickQuality;
 
@@ -230,8 +322,13 @@ export function createSky(mainCamera, { video = false } = {}) {
     // Сила света, которым подсвечены облака (днём солнце, ночью тусклая луна).
     uniforms.uLightI.value = s.lightInt / 4.2;
     uniforms.uTime.value = time;
-    // Снаружи заметно ярче, чем в комнате, — как на настоящем фото против окна.
-    uniforms.uGain.value = 1 + s.ai * 0.8;
+    // Снаружи ярче, чем в комнате, но без пересвета — небо за стеклом должно оставаться чётким.
+    uniforms.uGain.value = 1 + s.ai * 0.3;
+    // Близкие облака плывут вдоль фасада и по кругу возвращаются с другой стороны.
+    NEAR.forEach((c, i) => {
+      const x = NEAR_X0 + ((((c.x + c.speed * time - NEAR_X0) % NEAR_SPAN) + NEAR_SPAN) % NEAR_SPAN);
+      uniforms.uNear.value[i].set(x, c.y, c.z, c.r);
+    });
     uniforms.uCloud.value.copy(s.hor).lerp(white, 0.55).multiplyScalar(0.35 + s.ai * 0.75).lerp(night, s.stars * 0.85);
   }
 

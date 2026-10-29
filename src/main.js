@@ -16,9 +16,9 @@ import { buildMeadow } from './meadow.js';
 import { Ball } from './ball.js';
 import { Player } from './player.js';
 import { SoundScape } from './audio.js';
-import { createDust, createFireflies, createSplash, GradeShader, UnderwaterShader, VolumetricShader, updateVolumetric } from './effects.js';
+import { createDust, createFireflies, createGlass, createSplash, GradeShader, LensCrackShader, UnderwaterShader, VolumetricShader, updateVolumetric } from './effects.js';
 import { useSeed, seeded } from './random.js';
-import { DURATION, FPS, dayT, cameraAt, cameraSpeed, EVENTS, DRIPS } from '../video/shot.js';
+import { DURATION, FPS, CRACK_AT, dayT, cameraAt, cameraSpeed, EVENTS, DRIPS } from '../video/shot.js';
 
 // Видео-режим (?video=1): кадры рендерятся по одному по команде снаружи (video/render.mjs),
 // время и камера берутся из сценария пролёта, интерфейса и звука нет.
@@ -149,6 +149,18 @@ const envProbes = [
 // а не копит свет от кадра к кадру: иначе кадр зависел бы от того, что рисовалось до него.
 const VIDEO_BOUNCES = 3;
 const cubeTarget = envProbes[0].target;
+// Стёкла в окнах: прозрачные, с отражением своей комнаты под углом.
+const glasses = [];
+for (const [W, z, probe] of [
+  [WINDOW, ROOM.z0 - ROOM.wall / 2 + 0.05, envProbes[0]],
+  [WINDOW2, ROOM.z0 - ROOM.wall / 2 + 0.05, envProbes[1]],
+  [CWINDOW, CORRIDOR.z0 - ROOM.wall / 2 + 0.05, envProbes[1]],
+]) {
+  const glass = createGlass(W.x1 - W.x0, W.y1 - W.y0, probe.target.texture);
+  glass.position.set((W.x0 + W.x1) / 2, (W.y0 + W.y1) / 2, z);
+  scene.add(glass);
+  glasses.push(glass);
+}
 splash.mesh.material.envMap = cubeTarget.texture;
 let cubeFrame = 0;
 let probeNext = 0;
@@ -160,6 +172,8 @@ function captureEnvironment() {
   dust.points.visible = false;
   fireflies.points.visible = false;
   splash.points.visible = false;
+  // Стекло читает ту самую карту, что сейчас снимается, — на время съёмки его прячем.
+  for (const g of glasses) g.visible = false;
   // Карты комнат обновляются по очереди — вдвое меньше работы за кадр.
   // В видео — обе сразу: кадр не должен зависеть от того, сколько кадров было отрисовано до него.
   const probes = VIDEO ? envProbes : [envProbes[probeNext]];
@@ -182,6 +196,7 @@ function captureEnvironment() {
   dust.points.visible = true;
   fireflies.points.visible = true;
   splash.points.visible = true;
+  for (const g of glasses) g.visible = true;
 }
 
 // Свет: солнце/луна через окно и мягкий свет неба из окна.
@@ -241,6 +256,10 @@ composer.addPass(new OutputPass());
 const grade = new ShaderPass(GradeShader);
 grade.uniforms.uRes.value.set(innerWidth, innerHeight);
 composer.addPass(grade);
+// Разбитый объектив — только в ролике, после удара.
+const crack = new ShaderPass(LensCrackShader);
+crack.enabled = false;
+composer.addPass(crack);
 
 // Насколько вода сейчас в солнечном пятне — от этого зависят отблески на потолке.
 const waterSamples = [];
@@ -564,6 +583,11 @@ function renderFrame(i) {
   while (simulated < i) videoStep(++simulated);
   const t = i / FPS;
   const n = subframes(t);
+  // Трещина появляется за два кадра в момент удара.
+  const crackK = THREE.MathUtils.clamp(((t - CRACK_AT) * FPS + 1) / 2, 0, 1);
+  crack.enabled = crackK > 0;
+  crack.uniforms.uCrack.value = crackK;
+  crack.uniforms.uRes.value.set(canvas.width, canvas.height);
   cubeFrame = 0;
   if (n === 1) {
     draw();

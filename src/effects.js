@@ -348,6 +348,165 @@ export function createSplash(max = 900) {
 }
 
 // Финальная обработка: лёгкая хроматическая аберрация, виньетка и зерно — как у фото.
+// Разбитый объектив: кадр делится на клиновидные осколки вокруг точки удара (ячейки в
+// полярных координатах), каждый осколок чуть сдвигает и поворачивает изображение за собой;
+// по краям — тонкая тёмная трещина, блик там, где светло, и лёгкое радужное расслоение.
+// Несколько длинных неровных трещин уходят к краям кадра; в точке удара — матовое крошево.
+export const LensCrackShader = {
+  uniforms: {
+    tDiffuse: { value: null },
+    uCrack: { value: 0 },
+    uCenter: { value: new THREE.Vector2(0.6, 0.38) },
+    uRes: { value: new THREE.Vector2(1920, 1080) },
+  },
+  vertexShader: /* glsl */ `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: /* glsl */ `
+    uniform sampler2D tDiffuse;
+    uniform float uCrack;
+    uniform vec2 uCenter;
+    uniform vec2 uRes;
+    varying vec2 vUv;
+    #define SECTORS 9.0
+    vec2 h22(vec2 p) {
+      p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
+      return fract(sin(p) * 43758.5453);
+    }
+    float h21(vec2 p) { return fract(sin(dot(p, vec2(41.7, 289.3))) * 43758.5453); }
+
+    // Ячейки в пространстве (сектор, лог-радиус); по сектору — с заворотом по кругу.
+    // Возвращает расстояние до ближайшей границы и id ячейки.
+    vec3 shards(vec2 sp) {
+      vec2 cell = floor(sp);
+      vec2 f = fract(sp);
+      float d1 = 8.0;
+      vec2 id1 = vec2(0.0);
+      vec2 mr = vec2(0.0);
+      for (int j = -1; j <= 1; j++)
+        for (int i = -1; i <= 1; i++) {
+          vec2 g = vec2(float(i), float(j));
+          vec2 c = cell + g;
+          c.x = mod(c.x, SECTORS);
+          vec2 o = 0.15 + 0.7 * h22(c);
+          vec2 r = g + o - f;
+          float d = dot(r, r);
+          if (d < d1) { d1 = d; id1 = c; mr = r; }
+        }
+      float edge = 8.0;
+      for (int j = -2; j <= 2; j++)
+        for (int i = -2; i <= 2; i++) {
+          vec2 g = vec2(float(i), float(j));
+          vec2 c = cell + g;
+          c.x = mod(c.x, SECTORS);
+          vec2 o = 0.15 + 0.7 * h22(c);
+          vec2 r = g + o - f;
+          if (dot(mr - r, mr - r) > 1e-5) {
+            float e = dot(0.5 * (mr + r), normalize(r - mr));
+            // Не каждая граница осколков — сквозная трещина: часть швов стекло держит.
+            if (h21(id1 + c * 1.7) < 0.42) e = 8.0;
+            edge = min(edge, e);
+          }
+        }
+      return vec3(edge, id1);
+    }
+
+    void main() {
+      vec4 base = texture2D(tDiffuse, vUv);
+      if (uCrack <= 0.0) { gl_FragColor = base; return; }
+      vec2 asp = vec2(uRes.x / uRes.y, 1.0);
+      vec2 p = (vUv - uCenter) * asp;
+      float r = length(p);
+      float ang = atan(p.y, p.x) / 6.28318 + 0.5;
+      vec2 sp = vec2(ang * SECTORS + sin(r * 9.0) * 0.6, log(r + 0.02) * 1.7);
+      vec3 s = shards(sp);
+      float area = 1.0 - smoothstep(0.2, 0.42, r);
+      // Ширина трещины ~1 пиксель независимо от масштаба ячеек.
+      float w = fwidth(sp.y) * 0.8 + fwidth(sp.x) * 0.3;
+      float edge = (1.0 - smoothstep(0.0, w, s.x)) * area;
+
+      // Длинные трещины: ломаные лучи до краёв кадра.
+      for (int k = 0; k < 4; k++) {
+        float fk = float(k);
+        float a = h21(vec2(fk, 3.7)) * 6.28318;
+        float len = 0.45 + h21(vec2(fk, 9.1)) * 0.7;
+        float jag = sin(r * 23.0 + fk * 5.0) * 0.03 + sin(r * 71.0 + fk) * 0.012 + sin(r * 163.0 + fk * 2.0) * 0.004;
+        float da = abs(sin(atan(p.y, p.x) - a - jag));
+        float dist = da * r;
+        edge = max(edge, (1.0 - smoothstep(0.0, 1.1 / uRes.y, dist)) * step(0.03, r) * (1.0 - smoothstep(len * 0.6, len, r)) * 0.8);
+      }
+
+      // Осколок сдвигает и чуть поворачивает изображение за собой.
+      vec2 rnd = h22(s.yz + 0.31) - 0.5;
+      vec2 off = rnd * 0.006 * area + vec2(-p.y, p.x) * (h21(s.yz) - 0.5) * 0.02 * area;
+      vec2 uv = vUv + off / asp;
+      // Радужное расслоение у самых трещин.
+      float near = 1.0 - smoothstep(0.0, w * 6.0, s.x);
+      vec2 disp = normalize(p + 1e-5) / asp * 0.0016 * near * area;
+      vec3 col = vec3(texture2D(tDiffuse, uv + disp).r, texture2D(tDiffuse, uv).g, texture2D(tDiffuse, uv - disp).b);
+      // Каждый осколок под своим углом — чуть светлее или темнее.
+      col *= 1.0 + (h21(s.yz + 7.0) - 0.5) * 0.08 * area;
+
+      // Крошево в точке удара: матовое и светлое.
+      float crush = 1.0 - smoothstep(0.012, 0.05, r);
+      if (crush > 0.0) {
+        vec3 acc = vec3(0.0);
+        for (int k = 0; k < 8; k++) {
+          float a = float(k) * 0.785;
+          acc += texture2D(tDiffuse, vUv + vec2(cos(a), sin(a)) * 0.012 / asp).rgb;
+        }
+        col = mix(col, acc / 8.0 * 1.15 + 0.04, crush);
+      }
+
+      float lum = dot(col, vec3(0.299, 0.587, 0.114));
+      // Тёмная сердцевина трещины и блик по краю — сильнее там, где картинка светлая.
+      col *= 1.0 - edge * 0.4;
+      col += edge * (0.03 + lum * 0.28);
+      gl_FragColor = vec4(mix(base.rgb, col, uCrack), base.a);
+    }
+  `,
+};
+
+// Оконное стекло: совсем прозрачное, без мути; его выдаёт только отражение комнаты,
+// которое по Френелю усиливается под острым углом, как у настоящего стекла.
+// envMap — кубическая карта комнаты (снимается из её центра).
+export function createGlass(width, height, envMap) {
+  const material = new THREE.ShaderMaterial({
+    uniforms: { uEnv: { value: envMap }, uStrength: { value: 1 } },
+    vertexShader: /* glsl */ `
+      varying vec3 vWP;
+      varying vec3 vN;
+      void main() {
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vWP = wp.xyz;
+        vN = normalize(mat3(modelMatrix) * normal);
+        gl_Position = projectionMatrix * viewMatrix * wp;
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform samplerCube uEnv;
+      uniform float uStrength;
+      varying vec3 vWP;
+      varying vec3 vN;
+      void main() {
+        vec3 v = normalize(cameraPosition - vWP);
+        vec3 n = normalize(vN) * (dot(vN, v) < 0.0 ? -1.0 : 1.0);
+        float f = 0.04 + 0.96 * pow(1.0 - max(dot(n, v), 0.0), 5.0);
+        vec3 refl = textureCube(uEnv, reflect(-v, n)).rgb;
+        gl_FragColor = vec4(refl * uStrength, f);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+  return new THREE.Mesh(new THREE.PlaneGeometry(width, height), material);
+}
+
 // Под водой: свет гаснет с расстоянием (красный быстрее всего) и тонет в бирюзовой толще,
 // картинка слегка дрожит, контраст падает. uUnder — 0 над водой, 1 под водой.
 export const UnderwaterShader = {
