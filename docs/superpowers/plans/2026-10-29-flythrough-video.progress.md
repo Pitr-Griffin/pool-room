@@ -36,3 +36,4 @@ Revision 1 (user: fall looks cheap, game sounds out of place, shallow water chea
 - Corridor: low glide past the window instead of a 6 s stare; final hold beside the light column; impact moved to the kerb at z 1.4
 - Shallow water: waterline band, underwater tile tint, sheen, gentle larger ripples; ceiling drips (DRIPS) ripple corridor/pool 2, impact splashes into the shallow pool
 - Soundtrack: video/soundtrack.js replaces the game's pad/birds — underwater muffle, room tone, low beating drone, drips with long tile reverb, slip/whoosh/impact/crack, tinnitus and silence; src/audio.js reverted to the game-only version
+- Rest pose turned into the shade along the kerb (was facing the sunlit kerb, half the frame blown out); fall frames re-rendered; final cut 226 MB, breach 3.52 s, impact 45.70 s

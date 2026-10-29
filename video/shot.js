@@ -149,8 +149,8 @@ const FALL_START = CRACK_AT - FALL_T;
 // Для звука: когда камера выскальзывает и сколько длится свободное падение.
 export const FALL = { slip: FALL_START - SLIP, start: FALL_START, duration: FALL_T };
 const SLIP_PITCH = -0.16;
-// Лёжа набок камера смотрит вдоль кромки: слева вода, справа трава.
-const REST_DIR = [0, -0.12, -1];
+// Лёжа набок камера смотрит вдоль кромки в тень, к дальней стене: по одну сторону вода, по другую трава.
+const REST_DIR = [0.15, -0.1, 1];
 const REST_ROLL = Math.PI / 2;
 const BOUNCE = { height: 0.045, time: 0.19 };
 const SETTLE = 0.9;
