@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DURATION, FPS, hoursAt, dayT, cameraAt, EVENTS } from './shot.js';
+import { DURATION, FPS, CRACK_AT, hoursAt, dayT, cameraAt, EVENTS } from './shot.js';
 import { ROOM, POOL, CORRIDOR, ROOM2 } from '../src/layout.js';
 
 const near = (a, b, eps, msg) => assert.ok(Math.abs(a - b) <= eps, `${msg}: ${a} vs ${b}`);
@@ -63,4 +63,42 @@ test('события: всплытие на 3,5 с и удар на 45,7 с', ()
   const kinds = Object.fromEntries(EVENTS.map((e) => [e.kind, e.t]));
   near(kinds.breach, 3.5, 1e-9, 'breach');
   near(kinds.impact, 45.7, 1e-9, 'impact');
+});
+
+// Ориентация камеры как вектор взгляда + крен — чтобы мерить, как быстро она вращается.
+const look = (c) => {
+  const d = c.target.map((v, i) => v - c.pos[i]);
+  const l = Math.hypot(...d);
+  return d.map((v) => v / l);
+};
+const angle = (a, b) => Math.acos(Math.max(-1, Math.min(1, a[0] * b[0] + a[1] * b[1] + a[2] * b[2])));
+
+test('падение: вращение правдоподобное — не быстрее ~10 рад/с, крен меньше полуоборота', () => {
+  const dt = 1 / FPS;
+  for (let t = 44; t < CRACK_AT; t += dt) {
+    const a = cameraAt(t);
+    const b = cameraAt(t + dt);
+    const w = (angle(look(a), look(b)) + Math.abs(b.roll - a.roll)) / dt;
+    assert.ok(w < 10, `spin ${w.toFixed(1)} rad/s at ${t.toFixed(2)}`);
+  }
+});
+
+test('падение: перед ударом камера выскальзывает — чуть проседает до начала свободного падения', () => {
+  const hold = cameraAt(44).pos[1];
+  const fallStart = CRACK_AT - Math.sqrt((2 * (hold - EVENTS[1].at[1])) / 9.81);
+  assert.ok(cameraAt(fallStart - 0.05).pos[1] < hold - 0.01, 'slips before the drop');
+});
+
+test('удар: камера отскакивает и снова ложится', () => {
+  const floor = EVENTS[1].at[1];
+  const hop = Math.max(...[0.05, 0.1, 0.15].map((d) => cameraAt(CRACK_AT + d).pos[1]));
+  assert.ok(hop > floor + 0.015, `no bounce: ${hop}`);
+  near(cameraAt(CRACK_AT + 1.2).pos[1], cameraAt(DURATION).pos[1], 0.003, 'settled');
+});
+
+test('после того как улеглась — неподвижна (без дрожи)', () => {
+  const a = cameraAt(47.5);
+  const b = cameraAt(DURATION);
+  near(a.pos[1], b.pos[1], 1e-3, 'height');
+  near(a.roll, b.roll, 0.01, 'roll');
 });

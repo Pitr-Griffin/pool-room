@@ -4,21 +4,12 @@
   <meta charset="utf-8">
   <title>Pool Room — звук ролика</title>
   <!-- Офлайн-рендер звука «Пролёта»: открывает video/render.mjs --audio. -->
-  <script type="importmap">
-    {
-      "imports": {
-        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
-      }
-    }
-  </script>
 </head>
 <body>
 <script type="module">
-  import { SoundScape } from '../src/audio.js';
-  import { DayCycle } from '../src/daycycle.js';
-  import { DURATION, dayT } from './shot.js';
+  import { DURATION } from './shot.js';
   import { soundCues, mulberry32 } from './cues.js';
+  import { renderSoundtrack } from './soundtrack.js';
 
   // 16-битный стерео WAV из AudioBuffer.
   function wav(buffer) {
@@ -48,36 +39,10 @@
   }
 
   window.renderAudio = async () => {
-    // Случайности (шум, детюн, птицы) — повторяемые: один и тот же звук при каждом рендере.
-    Math.random = mulberry32(7);
+    // Звук ролика — свой (video/soundtrack.js), не игровой; случайности повторяемые.
     const rate = 48000;
     const ctx = new OfflineAudioContext(2, Math.ceil(rate * DURATION), rate);
-    const sound = new SoundScape({ ctx });
-    sound.time = 0;
-    sound.start();
-
-    // Птицы и сверчки — по времени суток таймлапса, шагами в кадр.
-    const day = new DayCycle(120);
-    const dt = 1 / 30;
-    const cues = soundCues();
-    let next = 0;
-    for (let t = 0; t < DURATION; t += dt) {
-      day.t = dayT(t);
-      day.compute();
-      sound.time = t;
-      // После удара — только глушение, без новых птиц.
-      if (t < cues[cues.length - 1].t) sound.update(dt, day.s.day, day.s.night);
-      while (next < cues.length && cues[next].t < t + dt) {
-        const c = cues[next++];
-        sound.time = c.t;
-        if (c.kind === 'splash') sound.splash(c.amount);
-        else if (c.kind === 'lap') sound.splash(c.amount);
-        else if (c.kind === 'impact') sound.impact();
-        else if (c.kind === 'crack') sound.crack();
-        else if (c.kind === 'muffle') sound.muffle(c.end);
-      }
-    }
-    const buffer = await ctx.startRendering();
+    const buffer = await renderSoundtrack(ctx, soundCues(), mulberry32(7), DURATION);
     const bytes = new Uint8Array(wav(buffer));
     let bin = '';
     for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));

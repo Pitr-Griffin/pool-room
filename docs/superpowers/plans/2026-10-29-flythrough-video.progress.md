@@ -30,3 +30,9 @@ Task 7: Ruling: plugin launcher pins hyperframes 0.8.215 which npm doesn't have 
 Task 7: Ruling: overlays (title, crack, fade) stay in index.html instead of sub-compositions — check warns nested_structure_needs_subcomposition (editability only) — cost if wrong: less convenient editing in the desktop app
 Task 7: Ruling: final MP4 is 279 MB > 50 MB — not committed (plan: ask; user delegated decisions) — ignored in .gitignore
 Task 7: complete (check ok; snapshots 6/23/42/46/49 s reviewed; ffprobe 1920x1080 30 fps 50.0 s + AAC; audio in final: splash 3.514 s, impact 45.70 s, silent after 49.6 s)
+Revision 1 (user: fall looks cheap, game sounds out of place, shallow water cheap, window stare odd):
+- Fall: slip (0.4 s), true free fall, quarter-turn tumble at constant rate, bounce 4.5 cm + damped rocking, then still; tests for spin rate, slip, bounce, rest
+- Motion blur: up to 16 subframes over a half-frame shutter when the camera moves fast (cameraSpeed), deterministic
+- Corridor: low glide past the window instead of a 6 s stare; final hold beside the light column; impact moved to the kerb at z 1.4
+- Shallow water: waterline band, underwater tile tint, sheen, gentle larger ripples; ceiling drips (DRIPS) ripple corridor/pool 2, impact splashes into the shallow pool
+- Soundtrack: video/soundtrack.js replaces the game's pad/birds — underwater muffle, room tone, low beating drone, drips with long tile reverb, slip/whoosh/impact/crack, tinnitus and silence; src/audio.js reverted to the game-only version

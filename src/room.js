@@ -28,6 +28,7 @@ export function makeTileMaterial(color, shared, lightmaps, body) {
   m.defines = {
     BODY_C: `vec2(${f((body.x0 + body.x1) / 2)}, ${f((body.z0 + body.z1) / 2)})`,
     BODY_H: `vec2(${f((body.x1 - body.x0) / 2)}, ${f((body.z1 - body.z0) / 2)})`,
+    BODY_LEVEL: f(body.level),
   };
   m.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, shared, { uLightMapB: lightmaps.b, uLmMix: lightmaps.mix, uCaustics: body.caustics });
@@ -126,7 +127,16 @@ export function makeTileMaterial(color, shared, lightmaps, body) {
         float tGrime = tNoise(tc * 1.3) * 0.6 + tNoise(tc * 7.0) * 0.4;
         vec3 groutCol = vec3(0.74, 0.76, 0.75) * (0.88 + 0.2 * tGrime);
         diffuseColor.rgb *= mix(tileCol * (1.0 - tGrime * 0.03), groutCol, tGrout);
-        diffuseColor.rgb *= 1.0 - tWet * mix(0.06, 0.35, tGrout);`
+        diffuseColor.rgb *= 1.0 - tWet * mix(0.06, 0.35, tGrout);
+        // Вода в своём водоёме: плитка под гладью чуть бирюзовая и темнее, у кромки на стенах —
+        // тёмная мокрая полоска, по которой глаз сразу читает уровень воды.
+        vec2 tIn = abs(tWP.xz - BODY_C) - BODY_H;
+        float tNear = 1.0 - step(0.04, max(tIn.x, tIn.y));
+        float tUnder = tNear * (1.0 - smoothstep(BODY_LEVEL - 0.006, BODY_LEVEL + 0.002, tWP.y));
+        diffuseColor.rgb *= mix(vec3(1.0), vec3(0.8, 0.93, 0.95), tUnder);
+        float tLine = tNear * float(tVertical) * (1.0 - smoothstep(0.0, 0.018, abs(tWP.y - BODY_LEVEL - 0.006)));
+        diffuseColor.rgb *= 1.0 - tLine * 0.22;
+        tWet = max(tWet, tLine);`
       )
       .replace(
         '#include <roughnessmap_fragment>',
@@ -154,7 +164,7 @@ export function makeTileMaterial(color, shared, lightmaps, body) {
             // Каустика от смоделированных волн: свет, сфокусированный поверхностью воды.
             vec4 cs = texture2D(uCaustics, poolUv(tWP));
             float c = clamp(cs.r - cs.g, -0.85, 5.0);
-            add = uLightCol * c * 0.32 + uSkyCol * 0.08 * caustic(tc * 0.45, uCTime * 0.35);
+            add = uLightCol * c * 0.32 + uSkyCol * 0.14 * caustic(tc * 0.45, uCTime * 0.35);
           } else if (normalize(vTileN).y < 0.5) {
             // Отблески от воды на потолке и стенах повторяют узор настоящих волн.
             vec2 q = abs(tWP.xz - BODY_C) - BODY_H;

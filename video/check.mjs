@@ -25,7 +25,7 @@ if (mode === 'interactive') {
   const url = await page.evaluate(({ n, prev }) => {
     for (const p of prev) window.poolRoomVideo.renderFrame(p);
     window.poolRoomVideo.renderFrame(n);
-    window.__lost = window.poolRoom.renderer.getContext().isContextLost(); return document.getElementById('scene').toDataURL('image/png');
+    window.__lost = window.poolRoom.renderer.getContext().isContextLost(); return window.poolRoomVideo.output().toDataURL('image/png');
   }, { n: Number(n), prev: prev.map(Number) });
   console.log('lost', await page.evaluate(() => window.__lost), 'frame', n, 'hash', createHash('sha256').update(url).digest('hex').slice(0, 16), (Date.now() - t) + 'ms');
   if (out && out !== '-') writeFileSync(out, Buffer.from(url.split(',')[1], 'base64'));

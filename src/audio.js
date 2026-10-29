@@ -4,38 +4,22 @@
 const CHORD = [110, 164.81, 246.94, 277.18, 329.63]; // A add9 — светлый, без грусти
 
 export class SoundScape {
-  // ctx — свой контекст (например, OfflineAudioContext для звука ролика); без него — обычный
-  // AudioContext браузера, как в игре.
-  constructor({ ctx = null } = {}) {
-    this.ctx = ctx;
-    this.started = false;
-    // Время, к которому привязываются звуки; null — «сейчас» (currentTime). Офлайн-рендер
-    // ставит его сам перед каждым событием.
-    this.time = null;
+  constructor() {
+    this.ctx = null;
     this.muted = false;
     this.birdT = 2;
     this.cricketT = 1;
   }
 
-  now() {
-    return this.time ?? this.ctx.currentTime;
-  }
-
   start() {
-    if (this.started) {
-      this.ctx.resume?.();
+    if (this.ctx) {
+      this.ctx.resume();
       return;
     }
-    this.started = true;
-    const ctx = (this.ctx ??= new (window.AudioContext || window.webkitAudioContext)());
+    const ctx = (this.ctx = new (window.AudioContext || window.webkitAudioContext)());
     this.master = ctx.createGain();
     this.master.gain.value = 0.85;
-    // Финальный фильтр: открыт полностью, пока muffle() не заглушит звук в конце ролика.
-    this.finalFilter = ctx.createBiquadFilter();
-    this.finalFilter.type = 'lowpass';
-    this.finalFilter.frequency.value = 20000;
-    this.master.connect(this.finalFilter);
-    this.finalFilter.connect(ctx.destination);
+    this.master.connect(ctx.destination);
 
     this.reverb = ctx.createConvolver();
     this.reverb.buffer = this.impulse(2.8, 2.4);
@@ -75,7 +59,7 @@ export class SoundScape {
 
   startPad() {
     const { ctx } = this;
-    const now = this.now();
+    const now = ctx.currentTime;
     const lp = ctx.createBiquadFilter();
     lp.type = 'lowpass';
     lp.frequency.value = 1100;
@@ -129,7 +113,7 @@ export class SoundScape {
   }
 
   get ready() {
-    return this.started && !this.muted;
+    return this.ctx && !this.muted;
   }
 
   toggleMute() {
@@ -141,7 +125,7 @@ export class SoundScape {
   // Короткий всплеск отфильтрованного шума.
   burst({ type = 'bandpass', freq, freqEnd, q = 1, attack = 0.004, decay, peak, wet, delay = 0 }) {
     const { ctx } = this;
-    const t = this.now() + delay;
+    const t = ctx.currentTime + delay;
     const src = ctx.createBufferSource();
     src.buffer = this.noise;
     const f = ctx.createBiquadFilter();
@@ -161,7 +145,7 @@ export class SoundScape {
 
   tone({ freq, freqEnd, type = 'sine', attack = 0.003, decay, peak, wet, delay = 0, pan = 0 }) {
     const { ctx } = this;
-    const t = this.now() + delay;
+    const t = ctx.currentTime + delay;
     const osc = ctx.createOscillator();
     osc.type = type;
     osc.frequency.setValueAtTime(freq, t);
@@ -212,34 +196,6 @@ export class SoundScape {
     const a = Math.min(Math.max(strength, 0.15), 1.2);
     this.tone({ freq: 210, freqEnd: 120, decay: 0.16, peak: 0.12 * a, wet: 0.6 });
     this.burst({ type: 'lowpass', freq: 600, decay: 0.06, peak: 0.08 * a, wet: 0.5 });
-  }
-
-  // Камера ударяется о кафельную кромку: глухой пластиковый удар и короткий звон кафеля.
-  impact() {
-    this.burst({ type: 'lowpass', freq: 200, freqEnd: 80, q: 0.7, attack: 0.002, decay: 0.22, peak: 0.55, wet: 0.35 });
-    this.tone({ freq: 130, freqEnd: 55, attack: 0.002, decay: 0.25, peak: 0.35, wet: 0.3 });
-    this.burst({ freq: 1800, q: 6, attack: 0.001, decay: 0.12, peak: 0.12, wet: 0.7, delay: 0.004 });
-  }
-
-  // Трескается стекло объектива: серия коротких высоких щелчков в первые 120 мс и тихий дребезг.
-  crack() {
-    for (let i = 0; i < 8; i++) {
-      const f = 3000 + Math.random() * 5000;
-      this.burst({ type: 'highpass', freq: f, q: 0.9, attack: 0.0008, decay: 0.012 + Math.random() * 0.02, peak: 0.09 + Math.random() * 0.08, wet: 0.25, delay: Math.random() * 0.12 });
-    }
-    for (let i = 0; i < 5; i++) {
-      this.tone({ freq: 5200 + Math.random() * 2500, attack: 0.001, decay: 0.08 + Math.random() * 0.12, peak: 0.012, wet: 0.5, delay: 0.1 + Math.random() * 0.35 });
-    }
-  }
-
-  // После удара звук глохнет, будто уши заложило, и к end обрывается в тишину.
-  muffle(end) {
-    const t = this.now();
-    this.finalFilter.frequency.setValueAtTime(20000, t);
-    this.finalFilter.frequency.exponentialRampToValueAtTime(400, t + 0.5);
-    this.master.gain.setValueAtTime(this.master.gain.value, t);
-    this.master.gain.linearRampToValueAtTime(0.4, t + 0.5);
-    this.master.gain.linearRampToValueAtTime(0.0, end);
   }
 
   chirp(vol) {

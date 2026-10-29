@@ -10,8 +10,27 @@ export const FADE = { start: 47, end: 49.5 };
 
 export const EVENTS = [
   { t: 3.5, kind: 'breach', at: [1.2, -0.12, 0.2] },
-  { t: CRACK_AT, kind: 'impact', at: [11.62, 0.05, 0.2] },
+  { t: CRACK_AT, kind: 'impact', at: [11.62, 0.05, 1.4] },
 ];
+
+// Капли с потолка в воду коридора и мелкого бассейна: редкие, неравномерные — по воде
+// расходятся круги, и в тишине слышно, как капает. Повторяемые (свой генератор).
+export const DRIPS = (() => {
+  let a = 91;
+  const rand = () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const list = [];
+  for (let t = 13 + rand() * 1.5; t < 44; t += 1.4 + rand() * 2.2) {
+    const corridor = t < 27;
+    const at = corridor ? [4.4 + rand() * 2.3, -0.02, 1.3 + rand() * 1.0] : [7.4 + rand() * 3.8, -0.02, 0.1 + rand() * 2.6];
+    list.push({ t, kind: 'drip', at });
+  }
+  return list;
+})();
 
 // Монотонный кубический сплайн (Fritsch–Carlson): не даёт выбросов между точками.
 function monotone(points) {
@@ -71,14 +90,16 @@ const KEYS = [
   [6, [1.0, 1.4, 0.6], [-1.0, 0.8, -2.5]],
   [11, [-2.5, 1.5, 1.5], [0.0, 0.5, -2.5]],
   [15, [2.5, 1.3, 1.8], [6.0, 0.8, 1.8]],
-  [19, [5.0, 0.55, 1.8], [6.0, 0.6, 1.6]],
-  [21, [5.6, 0.6, 1.9], [5.0, 1.1, -5.0]],
-  [25, [5.9, 0.6, 1.9], [5.6, 1.0, -5.0]],
+  // Коридор: камера низко скользит над водой, окно сбоку; рассветный луч ложится на воду.
+  [19, [4.7, 0.6, 1.85], [6.5, 0.5, 1.6]],
+  [22, [5.4, 0.55, 2.05], [6.8, 0.4, 1.25]],
+  [25, [6.2, 0.6, 1.95], [7.8, 0.45, 1.3]],
   [28, [8.5, 1.2, 1.0], [12.0, 0.5, -1.0]],
   [33, [12.0, 1.6, 1.5], [9.0, 0.3, -2.0]],
-  [37, [10.5, 1.5, -0.5], [12.2, 0.3, -1.2]],
-  [40, [11.5, 1.3, 0.3], [12.4, 1.5, -0.9]],
-  [44, [11.5, 1.32, 0.3], [12.4, 1.65, -0.95]],
+  // Финал: камера встаёт сбоку от столба света из колодца — видно весь луч от потолка до пятна на полу.
+  [37, [10.3, 1.5, 1.2], [12.2, 0.6, -0.6]],
+  [40, [11.4, 1.35, 1.6], [12.3, 1.2, -0.3]],
+  [44, [11.4, 1.37, 1.6], [12.3, 1.3, -0.35]],
 ];
 
 // Эрмитов сплайн по времени: касательные — разности соседних ключей, на концах ноль.
@@ -111,17 +132,32 @@ const times = KEYS.map((k) => k[0]);
 const posAt = hermite(times, KEYS.map((k) => k[1]));
 const targetAt = hermite(times, KEYS.map((k) => k[2]));
 
-// Падение: камеру отпускают так, чтобы она коснулась кромки мелкого бассейна ровно в CRACK_AT.
+// Падение — как у выскользнувшей из рук камеры:
+// 1) выскальзывает (SLIP с): проседает на пару сантиметров и клюёт вперёд;
+// 2) свободное падение: высота по g, горизонтальный снос равномерный, вращение с постоянной
+//    угловой скоростью — четверть оборота вбок и наклон к полу, без «киношной» раскрутки;
+// 3) удар о кромку мелкого бассейна в CRACK_AT: отскок на несколько сантиметров, затухающее
+//    покачивание вокруг позы покоя и короткая встряска;
+// 4) лежит набок неподвижно.
 const FALL_FROM = KEYS[KEYS.length - 1][1];
 const FALL_TO = EVENTS[1].at;
-const FALL_T = Math.sqrt((2 * (FALL_FROM[1] - FALL_TO[1])) / 9.81);
+const SLIP = 0.4;
+const SLIP_DROP = 0.035;
+// Высота свободного падения — от просевшей после выскальзывания позиции до кромки.
+const FALL_T = Math.sqrt((2 * (FALL_FROM[1] - SLIP_DROP - FALL_TO[1])) / 9.81);
 const FALL_START = CRACK_AT - FALL_T;
-const FALL_TURNS = 1.25;
+// Для звука: когда камера выскальзывает и сколько длится свободное падение.
+export const FALL = { slip: FALL_START - SLIP, start: FALL_START, duration: FALL_T };
+const SLIP_PITCH = -0.16;
 // Лёжа набок камера смотрит вдоль кромки: слева вода, справа трава.
 const REST_DIR = [0, -0.12, -1];
+const REST_ROLL = Math.PI / 2;
+const BOUNCE = { height: 0.045, time: 0.19 };
+const SETTLE = 0.9;
 
 const sub = (a, b) => a.map((v, i) => v - b[i]);
 const lerp = (a, b, f) => a + (b - a) * f;
+const smooth = (f) => f * f * (3 - 2 * f);
 
 function yawPitch(d) {
   return [Math.atan2(d[0], -d[2]), Math.atan2(d[1], Math.hypot(d[0], d[2]))];
@@ -134,21 +170,56 @@ function fromYawPitch(pos, yaw, pitch) {
 
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 
+// Затухающее колебание: отклонение от позы покоя после удара (s — секунды после удара).
+const ring = (s, amp, freq, decay) => amp * Math.exp(-s * decay) * Math.sin(s * freq * 2 * Math.PI);
+
 export function cameraAt(t) {
   const fov = 60;
   const lastT = times[times.length - 1];
-  if (t < FALL_START) {
+  const [yaw0, pitch0] = yawPitch(sub(KEYS[KEYS.length - 1][2], FALL_FROM));
+  const [yaw1, pitch1] = yawPitch(REST_DIR);
+  if (t < FALL_START - SLIP) {
     const hold = t > lastT;
     return { pos: hold ? FALL_FROM.slice() : posAt(t), target: targetAt(Math.min(t, lastT)), roll: 0, fov };
   }
-  const [yaw0, pitch0] = yawPitch(sub(KEYS[KEYS.length - 1][2], FALL_FROM));
-  const [yaw1, pitch1] = yawPitch(REST_DIR);
-  const f = Math.min((t - FALL_START) / FALL_T, 1);
-  // Свободное падение по высоте, по горизонтали — равномерный снос к кромке.
-  const pos = [lerp(FALL_FROM[0], FALL_TO[0], f), lerp(FALL_FROM[1], FALL_TO[1], f * f), lerp(FALL_FROM[2], FALL_TO[2], f)];
-  const e = f * f;
-  const yaw = yaw0 + wrap(yaw1 - yaw0) * e;
-  const pitch = lerp(pitch0, pitch1, e);
-  const roll = wrap((FALL_TURNS * 2 * Math.PI) * e);
+  if (t < FALL_START) {
+    // Выскальзывает: проседает и клюёт вперёд, с мелкой дрожью рук.
+    const f = smooth((t - (FALL_START - SLIP)) / SLIP);
+    const pos = [FALL_FROM[0], FALL_FROM[1] - SLIP_DROP * f, FALL_FROM[2]];
+    const jitter = 0.012 * f * Math.sin(t * 37);
+    return { pos, target: fromYawPitch(pos, yaw0 + jitter, pitch0 + SLIP_PITCH * f), roll: 0.06 * f, fov };
+  }
+  const from = [FALL_FROM[0], FALL_FROM[1] - SLIP_DROP, FALL_FROM[2]];
+  if (t < CRACK_AT) {
+    const s = t - FALL_START;
+    const f = s / FALL_T;
+    const pos = [lerp(from[0], FALL_TO[0], f), from[1] - 4.905 * s * s, lerp(from[2], FALL_TO[2], f)];
+    // Ровное вращение; к удару камера уже почти в позе покоя, остаток доберёт отскок.
+    const yaw = yaw0 + wrap(yaw1 - yaw0) * f * 0.85;
+    const pitch = lerp(pitch0 + SLIP_PITCH, pitch1, f * 0.85);
+    const roll = lerp(0.06, REST_ROLL, f * 0.85);
+    return { pos, target: fromYawPitch(pos, yaw, pitch), roll, fov };
+  }
+  // После удара: отскок по параболе, затем лежит; поворот доходит до покоя с затухающим покачиванием.
+  const s = t - CRACK_AT;
+  const hop = s < BOUNCE.time ? 4 * BOUNCE.height * (s / BOUNCE.time) * (1 - s / BOUNCE.time) : 0;
+  const pos = [FALL_TO[0], FALL_TO[1] + hop, FALL_TO[2]];
+  const left = s < SETTLE ? 1 - smooth(Math.min(s / 0.35, 1)) : 0;
+  const k = s < SETTLE ? 1 : 0;
+  const yaw = yaw1 - wrap(yaw1 - yaw0) * 0.15 * left + k * ring(s, 0.05, 3.1, 5.5);
+  const pitch = lerp(pitch1, pitch0 + SLIP_PITCH, 0.15 * left) + k * ring(s, 0.07, 2.6, 5);
+  const roll = REST_ROLL - (REST_ROLL - 0.06) * 0.15 * left + k * ring(s, 0.12, 2.2, 5);
   return { pos, target: fromYawPitch(pos, yaw, pitch), roll, fov };
+}
+
+// Скорость камеры: насколько сильно кадр меняется за время одного кадра (для размытия движения).
+export function cameraSpeed(t) {
+  const a = cameraAt(t);
+  const b = cameraAt(t + 1 / FPS);
+  const da = sub(b.target, b.pos);
+  const db = sub(a.target, a.pos);
+  const la = Math.hypot(...da);
+  const lb = Math.hypot(...db);
+  const turn = Math.acos(Math.max(-1, Math.min(1, da.reduce((acc, v, i) => acc + v * db[i], 0) / (la * lb))));
+  return turn + Math.abs(b.roll - a.roll) + Math.hypot(...sub(b.pos, a.pos)) * 2;
 }

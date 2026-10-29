@@ -1,8 +1,8 @@
 // Звуковые события ролика по сценарию (video/shot.js): когда и что звучит.
-// Эмбиент и птицы идут своим ходом в SoundScape; здесь — только привязанные к картинке звуки.
-import { CRACK_AT, FADE, EVENTS } from './shot.js';
+// Сам звук синтезирует video/soundtrack.js.
+import { CRACK_AT, FADE, EVENTS, DRIPS, FALL } from './shot.js';
 
-// Детерминированный генератор: одинаковое расписание при каждом рендере звука.
+// Детерминированный генератор: одинаковое расписание и звук при каждом рендере.
 export function mulberry32(a) {
   return () => {
     a |= 0;
@@ -15,13 +15,17 @@ export function mulberry32(a) {
 
 export function soundCues() {
   const rand = mulberry32(17);
-  const cues = [];
   const breach = EVENTS.find((e) => e.kind === 'breach').t;
-  cues.push({ t: breach, kind: 'splash', amount: 1.4 });
-  // Камера скользит низко над водой коридора — вода тихо плещется у стен.
-  for (let t = 17.3; t < 26; t += 0.55 + rand() * 0.6) cues.push({ t, kind: 'lap', amount: 0.18 + rand() * 0.14 });
-  cues.push({ t: CRACK_AT, kind: 'impact' });
-  cues.push({ t: CRACK_AT, kind: 'crack' });
-  cues.push({ t: CRACK_AT, kind: 'muffle', end: FADE.end });
+  const cues = [
+    // До всплытия звук идёт как из-под воды; распахивается чуть раньше плеска.
+    { t: 0, kind: 'underwater', end: breach - 0.02 },
+    { t: breach, kind: 'breach' },
+    ...DRIPS.map((d) => ({ t: d.t, kind: 'drip', amount: 0.7 + rand() * 0.3 })),
+    { t: FALL.slip, kind: 'slip' },
+    { t: FALL.start, kind: 'whoosh', dur: FALL.duration },
+    { t: CRACK_AT, kind: 'impact' },
+    { t: CRACK_AT, kind: 'crack' },
+    { t: CRACK_AT, kind: 'muffle', end: FADE.end },
+  ];
   return cues.sort((a, b) => a.t - b.t);
 }

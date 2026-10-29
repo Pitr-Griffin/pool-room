@@ -18,7 +18,7 @@ import { Player } from './player.js';
 import { SoundScape } from './audio.js';
 import { createDust, createFireflies, createSplash, GradeShader, UnderwaterShader, VolumetricShader, updateVolumetric } from './effects.js';
 import { useSeed, seeded } from './random.js';
-import { DURATION, FPS, dayT, cameraAt, EVENTS } from '../video/shot.js';
+import { DURATION, FPS, dayT, cameraAt, cameraSpeed, EVENTS, DRIPS } from '../video/shot.js';
 
 // Видео-режим (?video=1): кадры рендерятся по одному по команде снаружи (video/render.mjs),
 // время и камера берутся из сценария пролёта, интерфейса и звука нет.
@@ -529,29 +529,66 @@ function placeCamera(t) {
 function videoStep(k) {
   const t0 = (k - 1) / FPS;
   const t1 = k / FPS;
-  for (const ev of EVENTS) {
-    if (ev.kind !== 'breach' || ev.t < t0 || ev.t >= t1) continue;
+  for (const ev of [...EVENTS, ...DRIPS]) {
+    if (ev.t < t0 || ev.t >= t1) continue;
     const [x, , z] = ev.at;
-    water.ripple(x, z, 3, 0.35);
-    splash.burst(x, POOL.water, z, 110, 2.4);
+    if (ev.kind === 'breach') {
+      water.ripple(x, z, 3, 0.35);
+      splash.burst(x, POOL.water, z, 110, 2.4);
+    } else if (ev.kind === 'drip') {
+      // Капля с потолка: маленькая корона и круги по воде.
+      shallowWater.ripple(x, z, 1.4, 0.04);
+      splash.burst(x, SHALLOW_BODY.level, z, 7, 0.55);
+    } else if (ev.kind === 'impact') {
+      // Камера бьётся о кромку у самой воды — плеск в мелкий бассейн.
+      shallowWater.ripple(x - 0.12, z, 2.2, 0.22);
+      splash.burst(x - 0.12, SHALLOW_BODY.level, z, 45, 1.25);
+    }
   }
   day.t = dayT(t1);
   placeCamera(t1);
   step(k === 0 ? 0 : 1 / FPS);
+}
+// Размытие движения: когда камера быстро движется или вертится (падение), кадр — среднее
+// нескольких подкадров внутри «выдержки» в полкадра. Мир в подкадрах не меняется, только камера.
+const blurCanvas = document.createElement('canvas');
+let output = canvas;
+function subframes(t) {
+  const speed = cameraSpeed(t);
+  return speed < 0.03 ? 1 : Math.min(16, Math.ceil(speed / 0.012));
 }
 function renderFrame(i) {
   // Вода, брызги и трава зависят от истории: кадры идут только вперёд, пропущенные досчитываются.
   // Чтобы начать заново или с более раннего кадра — перезагрузить страницу.
   if (i <= simulated) throw new Error(`renderFrame(${i}): already at frame ${simulated}, reload the page`);
   while (simulated < i) videoStep(++simulated);
+  const t = i / FPS;
+  const n = subframes(t);
   cubeFrame = 0;
-  draw();
+  if (n === 1) {
+    draw();
+    output = canvas;
+    return;
+  }
+  blurCanvas.width = canvas.width;
+  blurCanvas.height = canvas.height;
+  const ctx2d = blurCanvas.getContext('2d');
+  for (let s = 0; s < n; s++) {
+    placeCamera(t + (s / n) * (0.5 / FPS));
+    // Карты отражений не зависят от камеры — снимаются один раз на кадр.
+    if (s > 0) cubeFrame = 1;
+    draw();
+    ctx2d.globalAlpha = 1 / (s + 1);
+    ctx2d.drawImage(canvas, 0, 0);
+  }
+  placeCamera(t);
+  output = blurCanvas;
 }
 
 if (VIDEO) {
   day.paused = true;
   for (const id of ['intro', 'panel', 'crosshair', 'resume']) document.getElementById(id).style.display = 'none';
-  window.poolRoomVideo = { ready: Promise.resolve(), renderFrame, frameCount: Math.round(DURATION * FPS) };
+  window.poolRoomVideo = { ready: Promise.resolve(), renderFrame, frameCount: Math.round(DURATION * FPS), output: () => output };
 } else {
   requestAnimationFrame(frame);
 }

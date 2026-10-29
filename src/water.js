@@ -35,6 +35,9 @@ export const SHALLOW_BODY = {
   damping: 0.99,
   scale: 0.04,
   slopeGain: 1.5,
+  // Мелкая вода почти прозрачна: её выдают мягкая крупная рябь в отражениях и лёгкий блеск.
+  microGain: 1.7,
+  sheen: 0.045,
   floorGLSL: `float floorAt(vec2 p) { return ${f(SHALLOW.floor)}; }`,
   maskGLSL: /* glsl */ `
   float waterMask(vec2 p) {
@@ -107,7 +110,7 @@ function waterShader(body) {
         if (waterMask(vWP.xz) < 0.5) discard;
         vec4 info = texture2D(tSim, vSimUv);
         // В мелкой воде волны ниже, поэтому их наклон усилен — иначе круги от шагов не видны.
-        vec2 slope = info.ba * ${f(body.slopeGain ?? 1)} + microSlope(vWP.xz);
+        vec2 slope = info.ba * ${f(body.slopeGain ?? 1)} + microSlope(vWP.xz) * ${f(body.microGain ?? 1)};
         vec3 n = normalize(vec3(slope.x, 1.0, slope.y));
         vec3 v = normalize(cameraPosition - vWP);
         vec2 suv = gl_FragCoord.xy / uRes;
@@ -129,7 +132,7 @@ function waterShader(body) {
           return;
         }
 
-        float fres = 0.02 + 0.98 * pow(1.0 - max(dot(n, v), 0.0), 5.0);
+        float fres = ${f(body.sheen ?? 0.02)} + 0.98 * pow(1.0 - max(dot(n, v), 0.0), 5.0);
 
         vec3 refl = texture2D(tDiffuse, vUvR.xy / vUvR.w + n.xz * 0.08).rgb;
 

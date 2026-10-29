@@ -64,7 +64,7 @@ if (todo.length) {
     const url = await page.evaluate(
       ({ i, preview }) => {
         window.poolRoomVideo.renderFrame(i);
-        const src = document.getElementById('scene');
+        const src = window.poolRoomVideo.output();
         if (window.poolRoom.renderer.getContext().isContextLost()) throw new Error('WebGL context lost');
         if (!preview) return src.toDataURL('image/png');
         // Превью — в половинном размере, чтобы лист из 150 кадров был обозримым.
