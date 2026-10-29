@@ -16,7 +16,7 @@ import { buildMeadow } from './meadow.js';
 import { Ball } from './ball.js';
 import { Player } from './player.js';
 import { SoundScape } from './audio.js';
-import { createDust, createSplash, GradeShader, VolumetricShader, updateVolumetric } from './effects.js';
+import { createDust, createFireflies, createSplash, GradeShader, VolumetricShader, updateVolumetric } from './effects.js';
 
 const canvas = document.getElementById('scene');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
@@ -78,6 +78,8 @@ const ball = new Ball();
 scene.add(ball.mesh);
 const dust = createDust();
 scene.add(dust.points);
+const fireflies = createFireflies();
+scene.add(fireflies.points);
 const player = new Player(camera, canvas);
 const sound = new SoundScape();
 
@@ -102,11 +104,13 @@ let cubeFrame = 0;
 function captureEnvironment() {
   water.capturing = true;
   dust.points.visible = false;
+  fireflies.points.visible = false;
   splash.points.visible = false;
   cubeCamera.update(renderer, scene);
   cubeTarget.texture.needsPMREMUpdate = true;
   water.capturing = false;
   dust.points.visible = true;
+  fireflies.points.visible = true;
   splash.points.visible = true;
 }
 
@@ -199,6 +203,7 @@ function applyLighting(time) {
   shared.uWaterLit.value = waterLit;
 
   dust.update(ld, s.light, s.lightInt, time);
+  fireflies.update(s.night, time);
   return ambient.copy(s.amb).multiplyScalar(s.ai);
 }
 

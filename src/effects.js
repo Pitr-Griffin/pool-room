@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { ROOM, LAYOUT_GLSL } from './layout.js';
+import { ROOM, MEADOW, meadowEdge, LAYOUT_GLSL } from './layout.js';
 
 // Объёмный свет: для каждого пикселя луч от камеры проходит через комнату,
 // и в каждой точке проверяется, освещена ли она солнцем через окно (с тенью переплёта).
@@ -102,7 +102,7 @@ export function updateVolumetric(pass, camera, lightDir, lightCol, intensity, ti
 
 // Пылинки, которые видны только в солнечном луче: медленно дрейфуют, кружатся и вспыхивают,
 // когда поворачиваются к свету гранью.
-export function createDust(count = 6000) {
+export function createDust(count = 40000) {
   const pos = new Float32Array(count * 3);
   const seed = new Float32Array(count);
   for (let i = 0; i < count; i++) {
@@ -139,7 +139,11 @@ export function createDust(count = 6000) {
         float glint = pow(0.5 + 0.5 * sin(uTime * (0.6 + fract(seed * 3.1) * 1.4) + seed * 7.0), 6.0);
         vLit = p.y < ${ROOM.height.toFixed(2)} ? inBeamFramed(p, uLightDir) * (0.25 + 1.6 * glint) : 0.0;
         vec4 mv = modelViewMatrix * vec4(p, 1.0);
-        gl_PointSize = vLit > 0.0 ? max((0.006 + fract(seed) * 0.009) * uScale / -mv.z, 2.0) : 0.0;
+        // Микрочастицы: доли миллиметра, на экране — пиксель-два, крупнее только у самой камеры.
+        float px = (0.0008 + fract(seed) * 0.0016) * uScale / -mv.z;
+        gl_PointSize = vLit > 0.0 ? clamp(px, 1.0, 3.0) : 0.0;
+        // Пылинка мельче пикселя не исчезает, а становится тусклее.
+        vLit *= min(px, 1.0);
         gl_Position = projectionMatrix * mv;
       }
     `,
@@ -148,8 +152,7 @@ export function createDust(count = 6000) {
       varying float vLit;
       void main() {
         float d = length(gl_PointCoord - 0.5);
-        float a = smoothstep(0.5, 0.0, d);
-        a *= a;
+        float a = smoothstep(0.5, 0.15, d);
         gl_FragColor = vec4(uCol * a * vLit, 1.0);
       }
     `,
@@ -163,7 +166,75 @@ export function createDust(count = 6000) {
   function update(lightDir, lightCol, intensity, time) {
     uniforms.uTime.value = time;
     uniforms.uLightDir.value.copy(lightDir);
-    uniforms.uCol.value.copy(lightCol).multiplyScalar(intensity * 0.9);
+    uniforms.uCol.value.copy(lightCol).multiplyScalar(intensity * 2.2);
+    uniforms.uScale.value = innerHeight * devicePixelRatio;
+  }
+  return { points, update };
+}
+
+// Светлячки: ночью несколько штук медленно кружат над цветами и мерцают.
+export function createFireflies(count = 14) {
+  const home = new Float32Array(count * 3);
+  const seed = new Float32Array(count);
+  for (let i = 0; i < count; i++) {
+    const x = MEADOW.x0 + 0.3 + Math.random() * (MEADOW.x1 - MEADOW.x0 - 0.6);
+    home[i * 3] = x;
+    home[i * 3 + 1] = 0.3 + Math.random() * 0.45;
+    home[i * 3 + 2] = MEADOW.z0 + 0.25 + Math.random() * (meadowEdge(x) - MEADOW.z0 - 0.35);
+    seed[i] = Math.random() * 100;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(home, 3));
+  geo.setAttribute('seed', new THREE.BufferAttribute(seed, 1));
+  const uniforms = {
+    uTime: { value: 0 },
+    uNight: { value: 0 },
+    uScale: { value: innerHeight },
+  };
+  const material = new THREE.ShaderMaterial({
+    uniforms,
+    vertexShader: /* glsl */ `
+      attribute float seed;
+      uniform float uTime;
+      uniform float uNight;
+      uniform float uScale;
+      varying float vGlow;
+      void main() {
+        vec3 p = position;
+        float t = uTime * (0.18 + fract(seed * 1.7) * 0.12);
+        // Петли вокруг своего цветка: две частоты, чтобы путь не повторялся.
+        p += vec3(sin(t + seed) * 0.35 + sin(t * 2.3 + seed * 2.0) * 0.08,
+                  sin(t * 1.4 + seed * 3.0) * 0.12,
+                  cos(t * 0.9 + seed) * 0.25 + cos(t * 2.1 + seed * 1.3) * 0.06);
+        // Вспыхивает на секунду-две, потом гаснет.
+        float blink = smoothstep(0.35, 1.0, sin(uTime * (0.7 + fract(seed * 3.3) * 0.6) + seed * 5.0));
+        vGlow = uNight * (0.08 + blink);
+        vec4 mv = modelViewMatrix * vec4(p, 1.0);
+        gl_PointSize = uNight > 0.01 ? 0.07 * uScale / -mv.z : 0.0;
+        gl_Position = projectionMatrix * mv;
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      varying float vGlow;
+      void main() {
+        float d = length(gl_PointCoord - 0.5);
+        // Яркое ядро и мягкий ореол вокруг.
+        float core = smoothstep(0.08, 0.0, d);
+        float halo = smoothstep(0.5, 0.0, d);
+        vec3 col = vec3(0.75, 1.0, 0.35);
+        gl_FragColor = vec4(col * (core * 6.0 + halo * halo * 0.35) * vGlow, 1.0);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+  const points = new THREE.Points(geo, material);
+  points.frustumCulled = false;
+
+  function update(night, time) {
+    uniforms.uTime.value = time;
+    uniforms.uNight.value = night;
     uniforms.uScale.value = innerHeight * devicePixelRatio;
   }
   return { points, update };
