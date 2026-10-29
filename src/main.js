@@ -17,10 +17,21 @@ import { Ball } from './ball.js';
 import { Player } from './player.js';
 import { SoundScape } from './audio.js';
 import { createDust, createFireflies, createSplash, GradeShader, VolumetricShader, updateVolumetric } from './effects.js';
+import { useSeed, seeded } from './random.js';
+import { DURATION, FPS, dayT, cameraAt, EVENTS } from '../video/shot.js';
+
+// Видео-режим (?video=1): кадры рендерятся по одному по команде снаружи (video/render.mjs),
+// время и камера берутся из сценария пролёта, интерфейса и звука нет.
+const VIDEO = new URLSearchParams(location.search).has('video');
+// Шум GTAO и прочие случайности внутри three.js тоже берутся из Math.random — подменяем целиком.
+if (VIDEO) {
+  useSeed(1);
+  Math.random = seeded(2);
+}
 
 const canvas = document.getElementById('scene');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
-const pixelRatio = Math.min(devicePixelRatio, 1.5);
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance', preserveDrawingBuffer: VIDEO });
+const pixelRatio = VIDEO ? 1 : Math.min(devicePixelRatio, 1.5);
 renderer.setPixelRatio(pixelRatio);
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
@@ -131,23 +142,42 @@ const envProbes = [
     m.envMap = target.texture;
     m.envMapIntensity = m === ball.mesh.material ? 0.7 : 0.6;
   }
-  return { cam, target };
+  return { cam, target, mats: list };
 });
+// В видео кафель подсвечивает сам себя за фиксированное число отскоков с нуля в каждом кадре,
+// а не копит свет от кадра к кадру: иначе кадр зависел бы от того, что рисовалось до него.
+const VIDEO_BOUNCES = 3;
 const cubeTarget = envProbes[0].target;
 splash.mesh.material.envMap = cubeTarget.texture;
 let cubeFrame = 0;
 let probeNext = 0;
 function captureEnvironment() {
   for (const w of waters) w.capturing = true;
+  // В видео вода в карты не попадает: её отражение и преломление остались бы от прошлого кадра,
+  // и кадр зависел бы от всей истории отрисовки, а не только от своего номера.
+  if (VIDEO) for (const w of waters) w.mesh.visible = false;
   dust.points.visible = false;
   fireflies.points.visible = false;
   splash.points.visible = false;
   // Карты комнат обновляются по очереди — вдвое меньше работы за кадр.
-  const probe = envProbes[probeNext];
+  // В видео — обе сразу: кадр не должен зависеть от того, сколько кадров было отрисовано до него.
+  const probes = VIDEO ? envProbes : [envProbes[probeNext]];
   probeNext = (probeNext + 1) % envProbes.length;
-  probe.cam.update(renderer, scene);
-  probe.target.texture.needsPMREMUpdate = true;
-  for (const w of waters) w.capturing = false;
+  const bounces = VIDEO ? VIDEO_BOUNCES : 1;
+  for (let b = 0; b < bounces; b++) {
+    // Первый отскок в видео — без отражений вовсе.
+    const saved = VIDEO && b === 0 ? probes.flatMap((p) => p.mats.map((m) => [m, m.envMapIntensity])) : [];
+    for (const [m] of saved) m.envMapIntensity = 0;
+    for (const probe of probes) {
+      probe.cam.update(renderer, scene);
+      probe.target.texture.needsPMREMUpdate = true;
+    }
+    for (const [m, v] of saved) m.envMapIntensity = v;
+  }
+  for (const w of waters) {
+    w.capturing = false;
+    w.mesh.visible = true;
+  }
   dust.points.visible = true;
   fireflies.points.visible = true;
   splash.points.visible = true;
@@ -365,8 +395,8 @@ const fx = {
 const res = new THREE.Vector2();
 let idleRipple = 0;
 
-function frame() {
-  const dt = Math.min(clock.getDelta(), 0.05);
+// Шаг мира: свет, вода, трава, мяч. Игрок и звук — только в интерактиве.
+function step(dt) {
   time += dt;
   fx.time = time;
 
@@ -374,6 +404,15 @@ function frame() {
   const amb = applyLighting(time);
   sky.update(day.s, time);
   shared.uCTime.value = time;
+
+  if (VIDEO) {
+    res.set(renderer.domElement.width, renderer.domElement.height);
+    for (const w of waters) w.update(time, amb, day.s.lightDir, res);
+    meadow.update(time, null);
+    splash.update(dt, (x, z, r) => waterAt(x, z)?.ripple(x, z, r * 50, 0.05));
+    ball.update(dt, player, fx);
+    return;
+  }
 
   const prevPos = player.pos.clone();
   const events = player.update(dt);
@@ -420,23 +459,74 @@ function frame() {
   ball.update(dt, player, fx);
   sound.update(dt, day.s.day, day.s.night);
 
-  if (cubeFrame-- <= 0) {
-    captureEnvironment();
-    cubeFrame = 15;
-  }
-
   if (!dragging) slider.value = Math.round(day.t * 1000);
   phaseEl.textContent = day.phase;
   clockEl.textContent = day.clock;
+}
+
+function draw() {
+  if (cubeFrame-- <= 0) {
+    captureEnvironment();
+    cubeFrame = VIDEO ? 0 : 15;
+  }
   grade.uniforms.uTime.value = time;
   camera.updateMatrixWorld();
   updateVolumetric(volumetric, camera, day.s.lightDir, day.s.light, day.s.lightInt, time);
 
   renderRefraction();
   composer.render();
+}
+
+function frame() {
+  step(Math.min(clock.getDelta(), 0.05));
+  draw();
   requestAnimationFrame(frame);
 }
-requestAnimationFrame(frame);
+
+// --- Видео-режим ---
+// Кадр i — мир после i шагов по 1/FPS. Камера и время суток ставятся из сценария перед каждым шагом,
+// события сценария (всплытие) срабатывают в шаге, на который приходятся.
+let simulated = -1;
+function placeCamera(t) {
+  const c = cameraAt(t);
+  camera.position.set(...c.pos);
+  camera.up.set(0, 1, 0);
+  camera.lookAt(...c.target);
+  camera.rotateZ(c.roll);
+  if (camera.fov !== c.fov) {
+    camera.fov = c.fov;
+    camera.updateProjectionMatrix();
+  }
+}
+function videoStep(k) {
+  const t0 = (k - 1) / FPS;
+  const t1 = k / FPS;
+  for (const ev of EVENTS) {
+    if (ev.kind !== 'breach' || ev.t < t0 || ev.t >= t1) continue;
+    const [x, , z] = ev.at;
+    water.ripple(x, z, 3, 0.35);
+    splash.burst(x, POOL.water, z, 180, 2.4);
+  }
+  day.t = dayT(t1);
+  placeCamera(t1);
+  step(k === 0 ? 0 : 1 / FPS);
+}
+function renderFrame(i) {
+  // Вода, брызги и трава зависят от истории: кадры идут только вперёд, пропущенные досчитываются.
+  // Чтобы начать заново или с более раннего кадра — перезагрузить страницу.
+  if (i <= simulated) throw new Error(`renderFrame(${i}): already at frame ${simulated}, reload the page`);
+  while (simulated < i) videoStep(++simulated);
+  cubeFrame = 0;
+  draw();
+}
+
+if (VIDEO) {
+  day.paused = true;
+  for (const id of ['intro', 'panel', 'crosshair', 'resume']) document.getElementById(id).style.display = 'none';
+  window.poolRoomVideo = { ready: Promise.resolve(), renderFrame, frameCount: Math.round(DURATION * FPS) };
+} else {
+  requestAnimationFrame(frame);
+}
 
 // Для отладки из консоли.
 window.poolRoom = { day, player, ball, camera, renderer, composer, gtao, bloom, scene, cubeTarget, water, shallowWater, splash };

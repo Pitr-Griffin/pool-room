@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { ROOM, ROOM2, MEADOW, meadowEdge, inMeadow2, LAYOUT_GLSL } from './layout.js';
+import { rand } from './random.js';
 
 // Объёмный свет: для каждого пикселя луч от камеры проходит через комнату,
 // и в каждой точке проверяется, освещена ли она солнцем через окно (с тенью переплёта).
@@ -108,10 +109,10 @@ export function createDust(count = 90000) {
   const seed = new Float32Array(count);
   for (let i = 0; i < count; i++) {
     // Обе комнаты и коридор между ними.
-    pos[i * 3] = ROOM.x0 + 0.2 + Math.random() * (ROOM2.x1 - ROOM.x0 - 0.4);
-    pos[i * 3 + 1] = 0.05 + Math.random() * (ROOM.height + 0.9);
-    pos[i * 3 + 2] = ROOM.z0 + 0.1 + Math.random() * (ROOM.z1 - ROOM.z0 - 0.2);
-    seed[i] = Math.random() * 100;
+    pos[i * 3] = ROOM.x0 + 0.2 + rand() * (ROOM2.x1 - ROOM.x0 - 0.4);
+    pos[i * 3 + 1] = 0.05 + rand() * (ROOM.height + 0.9);
+    pos[i * 3 + 2] = ROOM.z0 + 0.1 + rand() * (ROOM.z1 - ROOM.z0 - 0.2);
+    seed[i] = rand() * 100;
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
@@ -185,19 +186,19 @@ export function createFireflies(count = 34) {
     let z;
     if (i < 14) {
       // Над полосой цветов у окна первой комнаты.
-      x = MEADOW.x0 + 0.3 + Math.random() * (MEADOW.x1 - MEADOW.x0 - 0.6);
-      z = MEADOW.z0 + 0.25 + Math.random() * (meadowEdge(x) - MEADOW.z0 - 0.35);
+      x = MEADOW.x0 + 0.3 + rand() * (MEADOW.x1 - MEADOW.x0 - 0.6);
+      z = MEADOW.z0 + 0.25 + rand() * (meadowEdge(x) - MEADOW.z0 - 0.35);
     } else {
       // Над лугом второй комнаты.
       do {
-        x = ROOM2.x0 + 0.5 + Math.random() * (ROOM2.x1 - ROOM2.x0 - 1);
-        z = ROOM2.z0 + 0.5 + Math.random() * (ROOM2.z1 - ROOM2.z0 - 1);
+        x = ROOM2.x0 + 0.5 + rand() * (ROOM2.x1 - ROOM2.x0 - 1);
+        z = ROOM2.z0 + 0.5 + rand() * (ROOM2.z1 - ROOM2.z0 - 1);
       } while (!inMeadow2(x, z, 0.4));
     }
     home[i * 3] = x;
-    home[i * 3 + 1] = 0.3 + Math.random() * 0.45;
+    home[i * 3 + 1] = 0.3 + rand() * 0.45;
     home[i * 3 + 2] = z;
-    seed[i] = Math.random() * 100;
+    seed[i] = rand() * 100;
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(home, 3));
@@ -293,15 +294,15 @@ export function createSplash(max = 900) {
     for (let i = 0; i < count; i++) {
       const k = next;
       next = (next + 1) % max;
-      const a = Math.random() * Math.PI * 2;
-      const ring = 0.06 + Math.random() * 0.16;
+      const a = rand() * Math.PI * 2;
+      const ring = 0.06 + rand() * 0.16;
       pos.set([x + Math.cos(a) * ring, y + 0.01, z + Math.sin(a) * ring], k * 3);
       // Корона: капли уходят наружу и вверх; чем мельче, тем быстрее.
-      const small = Math.random() ** 2.5;
+      const small = rand() ** 2.5;
       const r = 0.0015 + (1 - small) * 0.0065 * Math.min(power, 1.6);
-      const out = (0.35 + Math.random() * 0.8) * power * (1.2 - r * 60);
-      vel.set([Math.cos(a) * out * 0.55, (0.9 + Math.random() * 1.5) * power * (1.15 - r * 40), Math.sin(a) * out * 0.55], k * 3);
-      life[k] = 0.5 + Math.random() * 0.9;
+      const out = (0.35 + rand() * 0.8) * power * (1.2 - r * 60);
+      vel.set([Math.cos(a) * out * 0.55, (0.9 + rand() * 1.5) * power * (1.15 - r * 40), Math.sin(a) * out * 0.55], k * 3);
+      life[k] = 0.5 + rand() * 0.9;
       radius[k] = r;
       surface[k] = y;
     }
