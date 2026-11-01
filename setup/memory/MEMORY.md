@@ -3,3 +3,6 @@
 - [Installed video tools](installed-video-tools.md) — HyperFrames, Remotion, video-use, OpenMontage, Diffusion Studio, three.js skills; what's left to configure
 - [Skill install policy](skill-install-policy.md) — prefer high-star repos, reject AI-slop, ask before installing my own finds
 - [Casual tone](casual-tone.md) — talk simply, occasional mat is OK when it fits
+- [Wait for go](wait-for-go.md) — never build before explicit «делай»; read the song's meaning, not its title
+- [Rassvety clip](rassvety-clip-project.md) — music video repo, prototypes state, local Qwen2-Audio as ears
+- [Local Whisper](whisper-local.md) — faster-whisper large-v3 on GPU for songs/speech; global skill "whisper"
